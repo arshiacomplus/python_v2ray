@@ -1,21 +1,34 @@
-name: Build Go Engine for All Platforms
+name: Build Go Engine & Create Release Assets
 
 on:
   workflow_dispatch:
   push:
-    branches: [ "main" ]
-    paths: [ 'core_engine/**' ]
+    tags:
+      - 'v*.*.*'
 
 jobs:
-  build:
-    # ! Use a matrix strategy to run the job for each platform
+  build-and-release:
     strategy:
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        include:
+          - os: windows-latest
+            goos: windows
+            goarch: amd64
+            arch_name: "64"
+          - os: ubuntu-latest
+            goos: linux
+            goarch: amd64
+            arch_name: "64"
+          - os: macos-latest
+            goos: darwin
+            goarch: amd64
+            arch_name: "64"
+          - os: macos-latest
+            goos: darwin
+            goarch: arm64
+            arch_name: "arm64-v8a"
 
-    # * Run the job on the OS specified in the matrix
     runs-on: ${{ matrix.os }}
-
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -29,28 +42,48 @@ jobs:
         run: go mod tidy
         working-directory: ./core_engine
 
-      # ! Define different output names for each OS
-      - name: Set output executable name
-        id: set_name
+      - name: Set output names
+        id: set_names
         shell: bash
         run: |
-          if [ "${{ runner.os }}" == "Windows" ]; then
-            echo "EXE_NAME=core_engine.exe" >> $GITHUB_ENV
-            echo "ARTIFACT_NAME=go-engine-windows" >> $GITHUB_ENV
-          elif [ "${{ runner.os }}" == "macOS" ]; then
-            echo "EXE_NAME=core_engine_macos" >> $GITHUB_ENV
-            echo "ARTIFACT_NAME=go-engine-macos" >> $GITHUB_ENV
-          else
-            echo "EXE_NAME=core_engine_linux" >> $GITHUB_ENV
-            echo "ARTIFACT_NAME=go-engine-linux" >> $GITHUB_ENV
+          EXE_NAME="core_engine"
+          if [ "${{ matrix.goos }}" == "windows" ]; then
+            EXE_NAME="core_engine.exe"
           fi
+          echo "EXE_NAME=$EXE_NAME" >> $GITHUB_ENV
+          echo "ZIP_NAME=core_engine-${{ matrix.goos }}-${{ matrix.arch_name }}.zip" >> $GITHUB_ENV
 
       - name: Build Go Executable
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
         run: go build -v -o ${{ env.EXE_NAME }} main.go
         working-directory: ./core_engine
 
-      - name: Upload Artifact
+      - name: Create Zip Archive
+        shell: bash
+        run: |
+          cd core_engine
+          zip ${{ env.ZIP_NAME }} ${{ env.EXE_NAME }}
+          cd ..
+      
+      - name: Upload Artifact for Release
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ env.ARTIFACT_NAME }}
-          path: core_engine/${{ env.EXE_NAME }}
+          name: ${{ env.ZIP_NAME }}
+          path: core_engine/${{ env.ZIP_NAME }}
+
+  create-release:
+    needs: build-and-release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Create Release and Upload Assets
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref }}
+          files: artifacts/**/*.zip
