@@ -1,50 +1,55 @@
-# .github/workflows/build-go.yml
+name: Build Go Engine for All Platforms
 
-name: Build Go Engine
-
-# ! Controls when the workflow will run
 on:
-  # * Allows you to run this workflow manually from the Actions tab
   workflow_dispatch:
-
-  # * Also runs on pushes to the main branch (optional, but good for testing)
   push:
     branches: [ "main" ]
-    paths:
-      - 'core_engine/**' # Only run if Go code changes
+    paths: [ 'core_engine/**' ]
 
 jobs:
   build:
-    # ! We want to build for Windows, so we use a Windows runner
-    runs-on: windows-latest
+    # ! Use a matrix strategy to run the job for each platform
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+
+    # * Run the job on the OS specified in the matrix
+    runs-on: ${{ matrix.os }}
 
     steps:
-      # * Step 1: Checks-out your repository under $GITHUB_WORKSPACE, so your job can access it
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # * Step 2: Set up Go environment on the runner
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.22' # You can change this to a newer version if you want
+          go-version: '1.22'
 
-      # * Step 3: Download Go dependencies (the 'go mod tidy' command)
       - name: Install Dependencies
         run: go mod tidy
-        # * We tell GitHub to run this command inside the core_engine directory
         working-directory: ./core_engine
 
-      # * Step 4: Build the Go application for Windows
+      # ! Define different output names for each OS
+      - name: Set output executable name
+        id: set_name
+        run: |
+          if [ "${{ runner.os }}" == "Windows" ]; then
+            echo "EXE_NAME=core_engine.exe" >> $GITHUB_ENV
+            echo "ARTIFACT_NAME=go-engine-windows" >> $GITHUB_ENV
+          elif [ "${{ runner.os }}" == "macOS" ]; then
+            echo "EXE_NAME=core_engine_macos" >> $GITHUB_ENV
+            echo "ARTIFACT_NAME=go-engine-macos" >> $GITHUB_ENV
+          else
+            echo "EXE_NAME=core_engine_linux" >> $GITHUB_ENV
+            echo "ARTIFACT_NAME=go-engine-linux" >> $GITHUB_ENV
+          fi
+
       - name: Build Go Executable
-        run: go build -v -o core_engine.exe main.go
+        run: go build -v -o ${{ env.EXE_NAME }} main.go
         working-directory: ./core_engine
 
-      # * Step 5: Upload the built executable as an artifact
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          # * This will be the name of the downloadable file
-          name: go-engine-windows
-          # * This is the path to the file we want to upload
-          path: core_engine/core_engine.exe
+          name: ${{ env.ARTIFACT_NAME }}
+          path: core_engine/${{ env.EXE_NAME }}
