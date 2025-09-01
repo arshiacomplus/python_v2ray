@@ -22,6 +22,7 @@ type TestConfig struct {
 	Config   json.RawMessage `json:"config"`
 	TestPort int             `json:"test_port"`
 	XrayPath string          `json:"xray_path"`
+	FragmentConfig json.RawMessage `json:"fragment_config,omitempty"`
 }
 
 type TestResult struct {
@@ -56,14 +57,25 @@ func main() {
 			}
 			defer os.Remove(tmpFile.Name())
 
+
+			outbounds := []json.RawMessage{c.Config}
+
+			if len(c.FragmentConfig) > 0 && string(c.FragmentConfig) != "null" {
+				fragmentOutbound := map[string]interface{}{
+					"protocol": "freedom",
+					"tag":      "fragment",
+					"settings": map[string]json.RawMessage{
+						"fragment": c.FragmentConfig,
+					},
+				}
+				fragmentBytes, _ := json.Marshal(fragmentOutbound)
+				outbounds = append(outbounds, json.RawMessage(fragmentBytes))
+			}
+
 			fullConfig := map[string]interface{}{
-				"log": map[string]string{
-					"loglevel": "debug", // Enable debug logging for detailed output
-				},
-				"inbounds": []map[string]interface{}{
-					{"protocol": "socks", "port": c.TestPort, "listen": "127.0.0.1", "settings": map[string]interface{}{"auth": "noauth", "udp": true}},
-				},
-				"outbounds": []json.RawMessage{c.Config},
+				"log":       map[string]string{"loglevel": "warning"}, // Use "warning" to reduce noise
+				"inbounds":  []map[string]interface{}{{"protocol": "socks", "port": c.TestPort, "listen": "127.0.0.1", "settings": map[string]interface{}{"auth": "noauth", "udp": true}}},
+				"outbounds": outbounds,
 			}
 
 			configBytes, _ := json.Marshal(fullConfig)
@@ -75,7 +87,6 @@ func main() {
 
 			cmd := exec.CommandContext(ctx, c.XrayPath, "-c", tmpFile.Name())
 
-			// Capture Xray's stdout and stderr
 			var xrayOutput bytes.Buffer
 			cmd.Stdout = &xrayOutput
 			cmd.Stderr = &xrayOutput
@@ -89,16 +100,12 @@ func main() {
 
 			ping, status := testProxy(c.TestPort)
 
-			// If the test fails, append Xray's log to the status for debugging
 			if status != "success" {
 				logStr := string(xrayOutput.Bytes())
-
-				// ! FIX: Use 'strings.ReplaceAll' to make the log a single line. No more 're'.
 				logStr = strings.ReplaceAll(logStr, "\n", " ")
 				logStr = strings.ReplaceAll(logStr, "\r", "")
-
 				if len(logStr) > 250 {
-					logStr = logStr[:250] // Shorten the log for cleaner output
+					logStr = logStr[:250]
 				}
 				status = fmt.Sprintf("%s | xray_log: %s", status, logStr)
 			}
