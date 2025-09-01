@@ -38,6 +38,10 @@ jobs:
         with:
           go-version: '1.22'
 
+      - name: Install Zip tool (for Windows only)
+        if: runner.os == 'Windows'
+        run: choco install zip
+
       - name: Install Dependencies
         run: go mod tidy
         working-directory: ./core_engine
@@ -72,6 +76,7 @@ jobs:
         with:
           name: ${{ env.ZIP_NAME }}
           path: core_engine/${{ env.ZIP_NAME }}
+
 
   create-release:
     needs: build-and-release
