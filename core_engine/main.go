@@ -117,11 +117,26 @@ func testProxy(listenIP string, port int) (int64, string) {
 	timeout := 8 * time.Second
 	dialer, err := proxy.SOCKS5("tcp", fmt.Sprintf("%s:%d", listenIP, port), nil, proxy.Direct)
 	if err != nil { return -1, fmt.Sprintf("failed_dialer: %v", err) }
-	httpClient := &http.Client{ Transport: &http.Transport{DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) { return dialer.Dial(network, addr) }}, Timeout: timeout}
+
+	httpClient := &http.Client{
+		Transport: &http.Transport{
+			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+				return dialer.Dial(network, addr)
+			},
+		},
+		Timeout: timeout,
+	}
+
 	start := time.Now()
 	resp, err := httpClient.Get(targetURL)
-	if err != nil { return -1, fmt.Sprintf("failed_http: %v", err) }
+	if err != nil {
+		return -1, fmt.Sprintf("failed_http: %v", err)
+	}
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusNoContent { return -1, fmt.Sprintf("bad_status_%d", resp.StatusCode) }
+
+	if resp.StatusCode != http.StatusNoContent {
+		return -1, fmt.Sprintf("bad_status_%d", resp.StatusCode)
+	}
+
 	return time.Since(start).Milliseconds(), "success"
 }
