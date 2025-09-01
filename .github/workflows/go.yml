@@ -32,6 +32,7 @@ jobs:
       # ! Define different output names for each OS
       - name: Set output executable name
         id: set_name
+        shell: bash
         run: |
           if [ "${{ runner.os }}" == "Windows" ]; then
             echo "EXE_NAME=core_engine.exe" >> $GITHUB_ENV
