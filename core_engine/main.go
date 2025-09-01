@@ -1,8 +1,7 @@
-// core_engine/main.go
-
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -10,44 +9,40 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/exec"
 	"sync"
 	"time"
-	"os/exec"
+
 	"golang.org/x/net/proxy"
 )
 
-// note: This struct defines the input format we expect from Python.
 type TestConfig struct {
 	Tag      string          `json:"tag"`
-	Config   json.RawMessage `json:"config"` // * We use RawMessage to keep the outbound config as-is.
+	Config   json.RawMessage `json:"config"`
 	TestPort int             `json:"test_port"`
-	XrayPath   string          `json:"xray_path"`
+	XrayPath string          `json:"xray_path"`
 }
 
-// note: This struct defines the output format we send back to Python.
 type TestResult struct {
 	Tag    string `json:"tag"`
-	Ping   int64  `json:"ping_ms"` // * Ping in milliseconds
+	Ping   int64  `json:"ping_ms"`
 	Status string `json:"status"`
 }
 
 func main() {
 	inputData, err := io.ReadAll(os.Stdin)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error reading stdin: %v\n", err)
 		os.Exit(1)
 	}
 
 	var configs []TestConfig
 	if err := json.Unmarshal(inputData, &configs); err != nil {
-		fmt.Fprintf(os.Stderr, "Error unmarshaling json: %v\n", err)
 		os.Exit(1)
 	}
 
-	results := make(chan TestResult, len(configs)) // * Use a buffered channel for collecting results.
+	results := make(chan TestResult, len(configs))
 	var wg sync.WaitGroup
 
-	// * All tests will run concurrently!
 	for _, conf := range configs {
 		wg.Add(1)
 		go func(c TestConfig) {
@@ -58,48 +53,52 @@ func main() {
 				results <- TestResult{Tag: c.Tag, Ping: -1, Status: "tempfile_error"}
 				return
 			}
-			// * Ensure the temp file is cleaned up even if something panics.
 			defer os.Remove(tmpFile.Name())
 
 			fullConfig := map[string]interface{}{
+				"log": map[string]string{
+					"loglevel": "debug", // ! Enable debug logging
+				},
 				"inbounds": []map[string]interface{}{
-					{
-						"protocol": "socks",
-						"port":     c.TestPort,
-						"listen":   "127.0.0.1",
-						"settings": map[string]interface{}{
-							"auth": "noauth",
-							"udp":  true,
-						},
-					},
+					{"protocol": "socks", "port": c.TestPort, "listen": "127.0.0.1", "settings": map[string]interface{}{"auth": "noauth", "udp": true}},
 				},
 				"outbounds": []json.RawMessage{c.Config},
 			}
 
 			configBytes, _ := json.Marshal(fullConfig)
-			if _, err := tmpFile.Write(configBytes); err != nil {
-				results <- TestResult{Tag: c.Tag, Ping: -1, Status: "tempfile_write_error"}
-				tmpFile.Close()
-				return
-			}
+			tmpFile.Write(configBytes)
 			tmpFile.Close()
 
-			// * We set a context with a timeout for the entire Xray process.
 			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 			defer cancel()
 
 			cmd := exec.CommandContext(ctx, c.XrayPath, "-c", tmpFile.Name())
+
+			// ! Capture Xray's output
+			var xrayOutput bytes.Buffer
+			cmd.Stdout = &xrayOutput
+			cmd.Stderr = &xrayOutput
 
 			if err := cmd.Start(); err != nil {
 				results <- TestResult{Tag: c.Tag, Ping: -1, Status: "xray_start_failed"}
 				return
 			}
 
-			time.Sleep(700 * time.Millisecond)
+			time.Sleep(800 * time.Millisecond) // Increased sleep time slightly for debug logs
 
 			ping, status := testProxy(c.TestPort)
 
-			// * Killing the process is more reliable than waiting for it to exit.
+			// ! If test fails, append Xray's log to the status
+			if status != "success" {
+				// Sanitize and shorten the log for cleaner output
+				logStr := string(xrayOutput.Bytes())
+				logStr = re.SubexpNames(logStr, -1)
+				if len(logStr) > 200 {
+					logStr = logStr[:200]
+				}
+				status = fmt.Sprintf("%s | xray_log: %s", status, logStr)
+			}
+
 			cmd.Process.Kill()
 			cmd.Wait()
 
@@ -120,7 +119,6 @@ func main() {
 }
 
 func testProxy(port int) (int64, string) {
-	// * This function tests the SOCKS5 proxy that the Xray core creates.
 	targetURL := "http://cp.cloudflare.com/generate_204"
 	timeout := 8 * time.Second
 
@@ -138,11 +136,11 @@ func testProxy(port int) (int64, string) {
 	start := time.Now()
 	resp, err := httpClient.Get(targetURL)
 	if err != nil {
-		return -1, "failed_http"
+		return -1, fmt.Sprintf("failed_http: %v", err)
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
+	if resp.StatusCode != http.StatusNoContent {
 		return -1, fmt.Sprintf("bad_status_%d", resp.StatusCode)
 	}
 
