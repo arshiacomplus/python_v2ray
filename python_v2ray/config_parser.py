@@ -178,10 +178,8 @@ def _parse_wireguard(uri: str, common: dict) -> ConfigParams:
 def _parse_hysteria(uri: str, common: dict) -> ConfigParams:
     params = _parse_query_params(urllib.parse.urlparse(uri).query)
     password = urllib.parse.urlparse(uri).username
-
     return ConfigParams(
         **common,
-        protocol="hysteria2",
         hy2_password=password,
         security="tls",
         sni=params.get("sni", common['address']),
@@ -231,6 +229,8 @@ class XrayConfigBuilder:
         * The main engine. Converts ConfigParams into a complete Xray outbound dictionary.
         * Now with added support for TLS fragmentation.
         """
+        if params.protocol in ["hysteria", "hysteria2","hy2"]:
+            params.protocol = "socks"
         use_fragment = fragment_config is not None
         stream_settings = self._build_stream_settings(params, fragment=use_fragment, **kwargs)
 

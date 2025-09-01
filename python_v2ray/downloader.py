@@ -1,20 +1,14 @@
-import requests
-import sys
-import os
-import zipfile
-import io
-import platform
+# python_v2ray/downloader.py
+
+import requests, sys, os, zipfile, io, platform
 from pathlib import Path
 from typing import Optional
 
 XRAY_REPO = "GFW-knocker/Xray-core"
 OWN_REPO = "arshiacomplus/python_v2ray"
+HYSTERIA_REPO = "apernet/hysteria"
 
 class BinaryDownloader:
-    """
-    * Handles the logic of downloading and extracting necessary binaries
-    * from GitHub Releases for the current operating system and architecture.
-    """
     def __init__(self, project_root: Path):
         self.project_root = project_root
         self.vendor_path = self.project_root / "vendor"
@@ -23,52 +17,54 @@ class BinaryDownloader:
         self.arch = self._get_arch_name()
 
     def _get_os_name(self) -> str:
-        """* Determines the OS name used in release assets."""
         if sys.platform == "win32": return "windows"
-        if sys.platform == "darwin": return "macos"
+        if sys.platform == "darwin": return "darwin"
         return "linux"
 
     def _get_arch_name(self) -> str:
-        """* Determines the architecture name (e.g., 64, 32, arm64-v8a)."""
         machine = platform.machine().lower()
-        if "amd64" in machine or "x86_64" in machine:
-            return "64"
-        if "arm64" in machine or "aarch64" in machine:
-            return "arm64-v8a"
-        if "386" in machine or "x86" in machine:
-            return "32"
+        if "amd64" in machine or "x86_64" in machine: return "amd64"
+        if "arm64" in machine or "aarch64" in machine: return "arm64"
+        if "386" in machine or "x86" in machine: return "386"
         return "unsupported"
 
     def _get_asset_url(self, assets: list, name_prefix: str) -> Optional[str]:
-        """
-        * It finds the download URL for a specific asset based on OS and arch.
-        """
-        asset_name = f"{name_prefix}-{self.os_name}-{self.arch}.zip"
-        print(f"note: Searching for asset: {asset_name}")
+        # * This logic is now smarter to handle different naming conventions
 
+        if name_prefix == "hysteria":
+            asset_name = f"{name_prefix}-{self.os_name}-{self.arch}"
+            if self.os_name == "windows":
+                asset_name += ".exe"
+        elif name_prefix == "Xray":
+            arch_name = "64" if self.arch == "amd64" else self.arch
+            os_name = "macos" if self.os_name == "darwin" else self.os_name # Xray uses macos
+            asset_name = f"{name_prefix}-{os_name}-{arch_name}.zip"
+        else:
+            arch_name = "64" if self.arch == "amd64" else self.arch
+            os_name = "macos" if self.os_name == "darwin" else self.os_name
+            asset_name = f"{name_prefix}-{os_name}-{arch_name}.zip"
+
+        print(f"note: Searching for asset: {asset_name}")
         for asset in assets:
             if asset['name'].lower() == asset_name.lower():
                 return asset['browser_download_url']
         return None
 
     def ensure_binary(self, name: str, target_dir: Path, repo: str) -> bool:
-        """
-        * Checks for a binary, and if not found, downloads and extracts the
-        * entire contents of the zip file (including .dat files).
-        """
         exe_name = f"{name}.exe" if sys.platform == "win32" else name
         target_file = target_dir / exe_name
 
-        geoip_file = target_dir / "geoip.dat"
-
-        if target_file.is_file() and (name != "xray" or geoip_file.is_file()):
-            print(f"* Binary '{exe_name}' and necessary assets already exist.")
+        if target_file.is_file():
+            print(f"* Binary '{exe_name}' already exists.")
             return True
 
-        print(f"! Binary '{exe_name}' not found. Attempting to download from '{repo}'...")
-
+        print(f"! Binary '{exe_name}' not found. Downloading from '{repo}'...")
         try:
-            release_url = f"https://api.github.com/repos/{repo}/releases/latest"
+            if name == "hysteria":
+                release_url = f"https://api.github.com/repos/{repo}/releases/tags/app%2Fv2.6.2" # ! Hardcoded to a specific stable version
+            else:
+                release_url = f"https://api.github.com/repos/{repo}/releases/latest"
+
             response = requests.get(release_url, timeout=10)
             response.raise_for_status()
             assets = response.json().get("assets", [])
@@ -77,36 +73,46 @@ class BinaryDownloader:
             download_url = self._get_asset_url(assets, asset_prefix)
 
             if not download_url:
-                print(f"! ERROR: Could not find downloadable asset for '{name}' matching '{self.os_name}-{self.arch}' in repo '{repo}'.")
+                print(f"! ERROR: Could not find downloadable asset for '{name}'.")
                 return False
 
-            print(f"* Downloading from: {download_url}")
+            print(f"* Downloading: {download_url}")
             asset_response = requests.get(download_url, timeout=120, stream=True)
             asset_response.raise_for_status()
 
-            print(f"* Extracting all files to '{target_dir}'...")
-            with zipfile.ZipFile(io.BytesIO(asset_response.content)) as z:
-                z.extractall(path=target_dir)
-            print(f"* Successfully downloaded and extracted all assets for '{name}'.")
+            if not download_url.endswith('.zip'):
+                with open(target_file, "wb") as f:
+                    f.write(asset_response.content)
+            else:
+                with zipfile.ZipFile(io.BytesIO(asset_response.content)) as z:
+                    for member_name in z.namelist():
+                        if Path(member_name).name.lower() == exe_name.lower():
+                            source = z.open(member_name)
+                            target = open(target_file, "wb")
+                            with source, target: target.write(source.read())
 
-            if sys.platform != "win32" and target_file.is_file():
+                            for dat_file in ["geoip.dat", "geosite.dat"]:
+                                if dat_file in z.namelist():
+                                    with z.open(dat_file) as source_dat, open(target_dir / dat_file, "wb") as target_dat:
+                                        target_dat.write(source_dat.read())
+
+            print(f"* Successfully downloaded '{exe_name}'.")
+            if sys.platform != "win32":
                 os.chmod(target_file, 0o755)
-
             return True
 
         except Exception as e:
-            print(f"! ERROR during download/extraction: {e}")
+            print(f"! ERROR during download/extraction for '{name}': {e}")
             return False
 
     def ensure_all(self):
-        """* Ensures all necessary binaries are present."""
         print("--- Checking for necessary binaries & databases ---")
         self.vendor_path.mkdir(exist_ok=True)
         self.core_engine_path.mkdir(exist_ok=True)
-
         xray_ok = self.ensure_binary("xray", self.vendor_path, XRAY_REPO)
         engine_ok = self.ensure_binary("core_engine", self.core_engine_path, OWN_REPO)
+        hysteria_ok = self.ensure_binary("hysteria", self.vendor_path, HYSTERIA_REPO)
 
         print("-------------------------------------------------")
-        if not (xray_ok and engine_ok):
-            raise RuntimeError("Could not obtain all necessary files.")
+        if not (xray_ok and engine_ok and hysteria_ok):
+            raise RuntimeError("Could not obtain all necessary binaries.")

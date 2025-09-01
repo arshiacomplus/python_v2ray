@@ -1,105 +1,66 @@
-
-import subprocess
-import json
-import os
-from typing import List, Dict, Any, Optional
+import subprocess, json, os, sys
 from pathlib import Path
-import sys
+from typing import List, Dict, Any, Optional
+from .config_parser import XrayConfigBuilder, ConfigParams
 
 class ConnectionTester:
-    """
-    * This class acts as a bridge between Python and the high-performance Go tester engine.
-    """
-
     def __init__(self, vendor_path: str, core_engine_path: str):
-        """
-        Args:
-            vendor_path (str): Path to the 'vendor' directory (for xray executable).
-            core_engine_path (str): Path to the 'core_engine' directory (for go engine).
-        """
+        self.vendor_path = Path(vendor_path)
+        self.core_engine_path = Path(core_engine_path)
+
         if sys.platform == "win32":
-            tester_exe_name = "core_engine.exe"
-            xray_exe_name = "xray.exe"
+            self.tester_exe = "core_engine.exe"; self.xray_exe = "xray.exe"; self.hysteria_exe = "hysteria.exe"
         elif sys.platform == "darwin":
-            tester_exe_name = "core_engine_macos"
-            xray_exe_name = "xray_macos"
-        else: # Linux and others
-            tester_exe_name = "core_engine_linux"
-            xray_exe_name = "xray_linux"
+            self.tester_exe = "core_engine_macos"; self.xray_exe = "xray_macos"; self.hysteria_exe = "hysteria_macos"
+        else:
+            self.tester_exe = "core_engine_linux"; self.xray_exe = "xray_linux"; self.hysteria_exe = "hysteria_linux"
 
-        # * Use pathlib for safe and cross-platform path construction
-        self.tester_path = str(Path(core_engine_path) / tester_exe_name)
-        self.xray_path = str(Path(vendor_path) / xray_exe_name)
+        if not (self.core_engine_path / self.tester_exe).is_file(): raise FileNotFoundError(f"Tester executable not found")
 
-        if not os.path.exists(self.tester_path):
-            raise FileNotFoundError(f"Tester executable not found at: {self.tester_path}")
-        if not os.path.exists(self.xray_path):
-            raise FileNotFoundError(f"Xray executable not found at: {self.xray_path}")
-    def test_outbounds(self, outbounds: List[Dict[str, Any]], fragment_config: Optional[Dict[str, Any]] = None, timeout: int = 60) -> List[Dict[str, Any]]:
-        """
-        * Tests a list of outbound configs concurrently using the Go engine, with optional fragmentation.
-
-        Args:
-            outbounds (List[Dict[str, Any]]): A list of Xray outbound config dictionaries.
-            fragment_config (Optional[Dict[str, Any]]): Settings for TLS fragmentation.
-            timeout (int): Total time in seconds to wait for all tests to complete.
-
-        Returns:
-            A list of result dictionaries.
-        """
-        if not outbounds:
-            return []
-        fragment_json_bytes = json.dumps(fragment_config).encode('utf-8') if fragment_config else b'null'
+    def test_outbounds(self, parsed_params: List[ConfigParams], fragment_config: Optional[Dict[str, Any]] = None, timeout: int = 60) -> List[Dict[str, Any]]:
+        if not parsed_params: return []
 
         test_configs = []
         base_port = 20800
-        for i, outbound in enumerate(outbounds):
-            if fragment_config and outbound.get("protocol") not in ["freedom", "blackhole"]:
-                if "streamSettings" not in outbound:
-                    outbound["streamSettings"] = {}
-                outbound["streamSettings"]["sockopt"] = {"dialerProxy": "fragment"}
+        builder = XrayConfigBuilder()
+
+        for i, params in enumerate(parsed_params):
+            config_dict = {}
+            client_path = ""
+            protocol = params.protocol
+
+            if protocol in ["hysteria", "hysteria2"]:
+                protocol = "hysteria2"
+                client_path = str(self.vendor_path / self.hysteria_exe)
+                config_dict = {
+                    "server": f"{params.address}:{params.port}",
+                    "auth": params.hy2_password,
+                    "socks5": {"listen": f"127.0.0.1:{base_port + i}"},
+                    "tls": {"sni": params.sni, "insecure": True}
+                }
+            else:
+                client_path = str(self.vendor_path / self.xray_exe)
+                outbound = builder.build_outbound_from_params(params, fragment_config=fragment_config)
+                if fragment_config:
+                    if "streamSettings" not in outbound: outbound["streamSettings"] = {}
+                    outbound["streamSettings"]["sockopt"] = {"dialerProxy": "fragment"}
+                config_dict = outbound
 
             test_configs.append({
-                "tag": outbound.get("tag", f"outbound_{i}"),
-                "config": outbound,
+                "tag": params.tag,
+                "protocol": protocol,
+                "config": config_dict,
                 "test_port": base_port + i,
-                "xray_path": self.xray_path,
-                "fragment_config": json.loads(fragment_json_bytes),
+                "client_path": client_path,
+                "fragment_config": fragment_config,
             })
 
-        input_json = json.dumps(test_configs)
+        input_json = json.dumps(test_configs, default=lambda o: o.__dict__)
 
         try:
-            with subprocess.Popen(
-                [self.tester_path],
-                stdin=subprocess.PIPE,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                encoding='utf-8'
-            ) as process:
+            with subprocess.Popen([str(self.core_engine_path / self.tester_exe)], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding='utf-8') as process:
                 stdout, stderr = process.communicate(input=input_json, timeout=timeout)
-
-                if process.returncode != 0:
-                    print(f"! Go engine exited with an error (return code {process.returncode}):")
-                    print(f"--- STDERR ---:\n{stderr}\n--------------")
-                    return []
-
-                if not stdout:
-                    print("! Go engine returned no output.")
-                    return []
-
-                results = json.loads(stdout)
-                return results
-
-        except subprocess.TimeoutExpired:
-            process.kill()
-            print(f"! Testing process timed out after {timeout} seconds.")
-            return []
-        except json.JSONDecodeError:
-            print("! Failed to decode JSON from Go engine. Raw output:")
-            print(f"--- STDOUT ---:\n{stdout}\n--------------")
-            return []
+                if process.returncode != 0: print(f"! Go engine error:\n{stderr}"); return []
+                return json.loads(stdout) if stdout else []
         except Exception as e:
-            print(f"! An unexpected error occurred while running the tester: {e}")
-            return []
+            print(f"! Tester execution error: {e}"); return []
