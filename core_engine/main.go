@@ -100,7 +100,7 @@ func main() {
 			}
 
 			time.Sleep(900 * time.Millisecond)
-			ping, status := testProxy(c.TestPort)
+			ping, status := testProxy(c.ListenIP,c.TestPort)
 
 			if status != "success" {
 				logStr := strings.ReplaceAll(string(clientOutput.Bytes()), "\n", " ")
@@ -124,7 +124,7 @@ func main() {
 	fmt.Println(string(outputData))
 }
 
-func testProxy(port int) (int64, string) {
+func testProxy(listenIP string, port int) (int64, string) {
 	targetURL := "http://www.google.com/generate_204"
 	timeout := 8 * time.Second
 	dialer, err := proxy.SOCKS5("tcp", fmt.Sprintf("%s:%d", listenIP, port), nil, proxy.Direct)
