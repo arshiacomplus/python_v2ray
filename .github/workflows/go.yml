@@ -1,0 +1,50 @@
+# .github/workflows/build-go.yml
+
+name: Build Go Engine
+
+# ! Controls when the workflow will run
+on:
+  # * Allows you to run this workflow manually from the Actions tab
+  workflow_dispatch:
+
+  # * Also runs on pushes to the main branch (optional, but good for testing)
+  push:
+    branches: [ "main" ]
+    paths:
+      - 'core_engine/**' # Only run if Go code changes
+
+jobs:
+  build:
+    # ! We want to build for Windows, so we use a Windows runner
+    runs-on: windows-latest
+
+    steps:
+      # * Step 1: Checks-out your repository under $GITHUB_WORKSPACE, so your job can access it
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # * Step 2: Set up Go environment on the runner
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22' # You can change this to a newer version if you want
+
+      # * Step 3: Download Go dependencies (the 'go mod tidy' command)
+      - name: Install Dependencies
+        run: go mod tidy
+        # * We tell GitHub to run this command inside the core_engine directory
+        working-directory: ./core_engine
+
+      # * Step 4: Build the Go application for Windows
+      - name: Build Go Executable
+        run: go build -v -o core_engine.exe main.go
+        working-directory: ./core_engine
+
+      # * Step 5: Upload the built executable as an artifact
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          # * This will be the name of the downloadable file
+          name: go-engine-windows
+          # * This is the path to the file we want to upload
+          path: core_engine/core_engine.exe
