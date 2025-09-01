@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"strings"
 	"sync"
 	"time"
 
@@ -57,7 +58,7 @@ func main() {
 
 			fullConfig := map[string]interface{}{
 				"log": map[string]string{
-					"loglevel": "debug", // ! Enable debug logging
+					"loglevel": "debug", // Enable debug logging for detailed output
 				},
 				"inbounds": []map[string]interface{}{
 					{"protocol": "socks", "port": c.TestPort, "listen": "127.0.0.1", "settings": map[string]interface{}{"auth": "noauth", "udp": true}},
@@ -74,7 +75,7 @@ func main() {
 
 			cmd := exec.CommandContext(ctx, c.XrayPath, "-c", tmpFile.Name())
 
-			// ! Capture Xray's output
+			// Capture Xray's stdout and stderr
 			var xrayOutput bytes.Buffer
 			cmd.Stdout = &xrayOutput
 			cmd.Stderr = &xrayOutput
@@ -84,17 +85,20 @@ func main() {
 				return
 			}
 
-			time.Sleep(800 * time.Millisecond) // Increased sleep time slightly for debug logs
+			time.Sleep(800 * time.Millisecond)
 
 			ping, status := testProxy(c.TestPort)
 
-			// ! If test fails, append Xray's log to the status
+			// If the test fails, append Xray's log to the status for debugging
 			if status != "success" {
-				// Sanitize and shorten the log for cleaner output
 				logStr := string(xrayOutput.Bytes())
-				logStr = re.SubexpNames(logStr, -1)
-				if len(logStr) > 200 {
-					logStr = logStr[:200]
+
+				// ! FIX: Use 'strings.ReplaceAll' to make the log a single line. No more 're'.
+				logStr = strings.ReplaceAll(logStr, "\n", " ")
+				logStr = strings.ReplaceAll(logStr, "\r", "")
+
+				if len(logStr) > 250 {
+					logStr = logStr[:250] // Shorten the log for cleaner output
 				}
 				status = fmt.Sprintf("%s | xray_log: %s", status, logStr)
 			}
@@ -124,7 +128,7 @@ func testProxy(port int) (int64, string) {
 
 	dialer, err := proxy.SOCKS5("tcp", fmt.Sprintf("127.0.0.1:%d", port), nil, proxy.Direct)
 	if err != nil {
-		return -1, "failed_dialer"
+		return -1, fmt.Sprintf("failed_dialer: %v", err)
 	}
 
 	httpTransport := &http.Transport{}
