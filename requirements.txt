@@ -1,0 +1,10 @@
+# This file is for setting up the development environment.
+# Package dependencies are managed in pyproject.toml
+
+# Linter and Formatter
+pylint
+black
+
+# Packaging tools
+twine
+build

@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "python_v2ray"
+version = "0.0.1"
+authors = [
+  { name="Your Name", email="you@example.com" },
+]
+description = "A powerful, high-level Python wrapper for V2Ray/Xray-core."
+readme = "README.md"
+requires-python = ">=3.8"
+dependencies = [
+    "grpcio",
+    "grpcio-tools",
+    "requests",
+]
+
+[project.urls]
+"Homepage" = "https://github.com/arshiacomplus/python_v2ray"
+"Bug Tracker" = "https://github.com/arshiacomplus/python_v2ray/issues"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["python_v2ray*"]
+exclude = ["examples*", "tests*", "core_engine*", "vendor*"]

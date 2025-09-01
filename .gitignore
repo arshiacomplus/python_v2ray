@@ -1,0 +1,15 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+build/
+dist/
+*.egg-info/
+
+# Go
+/core_engine/core_engine.exe
+/core_engine/core_engine
+
+# IDEs
+.vscode/
+.idea/

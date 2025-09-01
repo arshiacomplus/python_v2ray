@@ -1,0 +1,20 @@
+{
+    "log": {
+      "loglevel": "warning"
+    },
+    "inbounds": [
+      {
+        "port": 10808,
+        "protocol": "socks",
+        "settings": {
+          "auth": "noauth"
+        }
+      }
+    ],
+    "outbounds": [
+      {
+        "protocol": "freedom",
+        "settings": {}
+      }
+    ]
+  }
