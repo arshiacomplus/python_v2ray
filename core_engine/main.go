@@ -22,6 +22,7 @@ type TestConfig struct {
 	Tag            string          `json:"tag"`
 	Protocol       string          `json:"protocol"`
 	Config         json.RawMessage `json:"config"`
+	ListenIP       string          `json:"listen_ip"`
 	TestPort       int             `json:"test_port"`
 	ClientPath     string          `json:"client_path"`
 	FragmentConfig json.RawMessage `json:"fragment_config,omitempty"`
@@ -75,7 +76,7 @@ func main() {
 
 				fullConfig := map[string]interface{}{
 					"log":       map[string]string{"loglevel": "warning"},
-					"inbounds":  []map[string]interface{}{{"protocol": "socks", "port": c.TestPort, "listen": "127.0.0.1", "settings": map[string]interface{}{"auth": "noauth", "udp": true}}},
+					"inbounds":  []map[string]interface{}{{"protocol": "socks", "port": c.TestPort, "listen": c.ListenIP, "settings": map[string]interface{}{"auth": "noauth", "udp": true}}},
 					"outbounds": outbounds,
 				}
 				configBytes, _ := json.Marshal(fullConfig)
@@ -126,7 +127,7 @@ func main() {
 func testProxy(port int) (int64, string) {
 	targetURL := "http://www.google.com/generate_204"
 	timeout := 8 * time.Second
-	dialer, err := proxy.SOCKS5("tcp", fmt.Sprintf("127.0.0.1:%d", port), nil, proxy.Direct)
+	dialer, err := proxy.SOCKS5("tcp", fmt.Sprintf("%s:%d", listenIP, port), nil, proxy.Direct)
 	if err != nil { return -1, fmt.Sprintf("failed_dialer: %v", err) }
 	httpClient := &http.Client{ Transport: &http.Transport{DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) { return dialer.Dial(network, addr) }}, Timeout: timeout}
 	start := time.Now()
