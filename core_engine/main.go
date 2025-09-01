@@ -121,7 +121,7 @@ func main() {
 
 func testProxy(port int) (int64, string) {
 	// * This function tests the SOCKS5 proxy that the Xray core creates.
-	targetURL := "https://www.gstatic.com/generate_204"
+	targetURL := "http://cp.cloudflare.com/generate_204"
 	timeout := 8 * time.Second
 
 	dialer, err := proxy.SOCKS5("tcp", fmt.Sprintf("127.0.0.1:%d", port), nil, proxy.Direct)
