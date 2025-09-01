@@ -50,7 +50,7 @@ func main() {
 	// * All tests will run concurrently!
 	for _, conf := range configs {
 		wg.Add(1)
-		go func(c Test-Config) {
+		go func(c TestConfig) {
 			defer wg.Done()
 
 			tmpFile, err := os.CreateTemp("", "xray-test-*.json")
@@ -101,7 +101,7 @@ func main() {
 
 			// * Killing the process is more reliable than waiting for it to exit.
 			cmd.Process.Kill()
-			cmd.Wait() /
+			cmd.Wait()
 
 			results <- TestResult{Tag: c.Tag, Ping: ping, Status: status}
 		}(conf)
