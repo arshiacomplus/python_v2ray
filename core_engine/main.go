@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -49,19 +50,18 @@ func main() {
 			var cmd *exec.Cmd
 			var configFile *os.File
 
-			if c.Protocol == "hysteria" || c.Protocol == "hysteria2" || c.Protocol == "hy2" {
+			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+			defer cancel()
 
+			if c.Protocol == "hysteria" || c.Protocol == "hysteria2" {
 				configFile, err = os.CreateTemp("", "hysteria-*.json")
 				if err != nil { results <- TestResult{Tag: c.Tag, Ping: -1, Status: "tempfile_error"}; return }
 				defer os.Remove(configFile.Name())
-
 				configFile.Write(c.Config)
 				configFile.Close()
-
-				cmd = exec.Command(c.ClientPath, "client", "-c", configFile.Name())
+				cmd = exec.CommandContext(ctx, c.ClientPath, "client", "-c", configFile.Name())
 
 			} else {
-
 				configFile, err = os.CreateTemp("", "xray-*.json")
 				if err != nil { results <- TestResult{Tag: c.Tag, Ping: -1, Status: "tempfile_error"}; return }
 				defer os.Remove(configFile.Name())
@@ -82,13 +82,13 @@ func main() {
 				configFile.Write(configBytes)
 				configFile.Close()
 
-				cmd = exec.Command(c.ClientPath, "-c", configFile.Name())
+				cmd = exec.CommandContext(ctx, c.ClientPath, "-c", configFile.Name())
 			}
 
-			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-			defer cancel()
-			cmd.SysProcAttr = &exec.SysProcAttr{HideWindow: true}
-			cmd.Cancel = func() error { return cmd.Process.Kill() }
+
+			if runtime.GOOS == "windows" {
+				setHideWindow(cmd)
+			}
 
 			var clientOutput bytes.Buffer
 			cmd.Stdout = &clientOutput
