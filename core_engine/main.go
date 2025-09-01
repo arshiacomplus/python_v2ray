@@ -12,7 +12,7 @@ import (
 	"os"
 	"sync"
 	"time"
-
+	"os/exec"
 	"golang.org/x/net/proxy"
 )
 
@@ -21,6 +21,7 @@ type TestConfig struct {
 	Tag      string          `json:"tag"`
 	Config   json.RawMessage `json:"config"` // * We use RawMessage to keep the outbound config as-is.
 	TestPort int             `json:"test_port"`
+	XrayPath   string          `json:"xray_path"`
 }
 
 // note: This struct defines the output format we send back to Python.
@@ -31,7 +32,6 @@ type TestResult struct {
 }
 
 func main() {
-	// ! Read the list of configs from Standard Input (stdin).
 	inputData, err := io.ReadAll(os.Stdin)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error reading stdin: %v\n", err)
@@ -44,21 +44,21 @@ func main() {
 		os.Exit(1)
 	}
 
-	results := make([]TestResult, 0)
-	var wg sync.WaitGroup // ? A WaitGroup waits for a collection of goroutines to finish.
-	var mu sync.Mutex     // ? A Mutex prevents race conditions when writing to the results slice.
+	results := make(chan TestResult, len(configs)) // * Use a buffered channel for collecting results.
+	var wg sync.WaitGroup
 
 	// * All tests will run concurrently!
 	for _, conf := range configs {
 		wg.Add(1)
-		go func(c TestConfig) {
+		go func(c Test-Config) {
 			defer wg.Done()
 
-			// * Create a temporary config file for the Xray core to use.
 			tmpFile, err := os.CreateTemp("", "xray-test-*.json")
 			if err != nil {
+				results <- TestResult{Tag: c.Tag, Ping: -1, Status: "tempfile_error"}
 				return
 			}
+			// * Ensure the temp file is cleaned up even if something panics.
 			defer os.Remove(tmpFile.Name())
 
 			fullConfig := map[string]interface{}{
@@ -67,32 +67,55 @@ func main() {
 						"protocol": "socks",
 						"port":     c.TestPort,
 						"listen":   "127.0.0.1",
-						"settings": map[string]interface{}{"udp": true},
+						"settings": map[string]interface{}{
+							"auth": "noauth",
+							"udp":  true,
+						},
 					},
 				},
 				"outbounds": []json.RawMessage{c.Config},
 			}
 
 			configBytes, _ := json.Marshal(fullConfig)
-			tmpFile.Write(configBytes)
+			if _, err := tmpFile.Write(configBytes); err != nil {
+				results <- TestResult{Tag: c.Tag, Ping: -1, Status: "tempfile_write_error"}
+				tmpFile.Close()
+				return
+			}
 			tmpFile.Close()
 
-			// todo: We need a way to run the xray executable here.
-			// For now, let's assume it's running and we can test the SOCKS port.
-			// This part will be completed in the next steps.
+			// * We set a context with a timeout for the entire Xray process.
+			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+			defer cancel()
+
+			cmd := exec.CommandContext(ctx, c.XrayPath, "-c", tmpFile.Name())
+
+			if err := cmd.Start(); err != nil {
+				results <- TestResult{Tag: c.Tag, Ping: -1, Status: "xray_start_failed"}
+				return
+			}
+
+			time.Sleep(700 * time.Millisecond)
 
 			ping, status := testProxy(c.TestPort)
 
-			mu.Lock()
-			results = append(results, TestResult{Tag: c.Tag, Ping: ping, Status: status})
-			mu.Unlock()
+			// * Killing the process is more reliable than waiting for it to exit.
+			cmd.Process.Kill()
+			cmd.Wait() /
+
+			results <- TestResult{Tag: c.Tag, Ping: ping, Status: status}
 		}(conf)
 	}
 
-	wg.Wait() // * Wait for all tests to complete.
+	wg.Wait()
+	close(results)
 
-	// ! Print the final results as a JSON array to Standard Output (stdout).
-	outputData, _ := json.Marshal(results)
+	finalResults := make([]TestResult, 0, len(configs))
+	for res := range results {
+		finalResults = append(finalResults, res)
+	}
+
+	outputData, _ := json.Marshal(finalResults)
 	fmt.Println(string(outputData))
 }
 
