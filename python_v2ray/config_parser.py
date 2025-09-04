@@ -61,29 +61,31 @@ class ConfigParams:
     hy2_obfs_password: Optional[str] = ""
 
 
-# ! =======================================================================
-# ! === STEP 2: THE URI PARSING ENGINE                                  ===
-# ! =======================================================================
-
 def _parse_query_params(query: str) -> Dict[str, str]:
     """* A utility to parse URL query parameters into a dictionary."""
     return {k: v[0] for k, v in urllib.parse.parse_qs(query).items()}
-
 def parse_uri(config_uri: str) -> Optional[ConfigParams]:
     """
     * This is the main parsing engine. It delegates the parsing to
-    * protocol-specific helper functions.
+    * protocol-specific helper functions and validates the core components.
     """
     try:
         uri = urllib.parse.unquote(config_uri).strip()
+
         raw_tag = uri.split("#", 1)[1] if len(uri.split("#", 1)) > 1 else "Untitled"
-        clean_tag = re.sub(r'[^a-zA-Z0-9_-]', '_', raw_tag)
-        tag = clean_tag if clean_tag else "proxy"
+        tag = re.sub(r'[^a-zA-Z0-9_.-]', '_', raw_tag) or "proxy"
+
         protocol = uri.split("://")[0]
+
+        if "@" not in uri or ":" not in uri.split("@")[-1]:
+            if protocol != 'vmess':
+                print(f"! Invalid URI structure (missing @ or :). Skipping: {uri[:40]}...")
+                return None
 
         parser_map = {
             "vless": _parse_vless, "vmess": _parse_vmess, "trojan": _parse_trojan,
-            "ss": _parse_shadowsocks, "socks": _parse_socks, "wireguard": _parse_wireguard,"hysteria": _parse_hysteria, "hysteria2": _parse_hysteria,"hy2": _parse_hysteria,
+            "ss": _parse_shadowsocks, "socks": _parse_socks, "wireguard": _parse_wireguard,
+            "hysteria": _parse_hysteria, "hysteria2": _parse_hysteria, "hy2": _parse_hysteria,
         }
         parser = parser_map.get(protocol)
 
@@ -91,12 +93,15 @@ def parse_uri(config_uri: str) -> Optional[ConfigParams]:
             print(f"note: Unsupported protocol found: {protocol}")
             return None
 
-        # This part extracts the core address/port for protocols that have it in a standard format
         common = {"protocol": protocol, "tag": tag, "address": "", "port": 0}
-        match = re.search(r"@([^:]+):(\d+)", uri)
+
+        match = re.search(r"@([^:]+):(\d+)", uri.split("?")[0])
         if match:
             common["address"] = match.group(1)
             common["port"] = int(match.group(2))
+        elif protocol != 'vmess':
+            print(f"! Could not extract host/port from URI. Skipping: {uri[:40]}...")
+            return None
 
         return parser(uri, common)
 
@@ -104,7 +109,7 @@ def parse_uri(config_uri: str) -> Optional[ConfigParams]:
         print(f"! CRITICAL ERROR while parsing URI '{config_uri[:30]}...': {e}")
         return None
 
-# --- Private Parsing Helpers ---
+
 
 def _parse_vless(uri: str, common: dict) -> ConfigParams:
     parsed_url = urllib.parse.urlparse(uri)
@@ -188,10 +193,6 @@ def _parse_hysteria(uri: str, common: dict) -> ConfigParams:
         hy2_obfs_password=params.get("obfs-password"),
     )
 
-# ! 3. Up
-# ! =======================================================================
-# ! === STEP 3: THE CONFIG BUILDER ENGINE                               ===
-# ! =======================================================================
 
 class XrayConfigBuilder:
     def __init__(self):
@@ -227,10 +228,25 @@ class XrayConfigBuilder:
     def build_outbound_from_params(self, params: ConfigParams, fragment_config: Optional[Dict[str, Any]] = None, **kwargs) -> Dict[str, Any]:
         """
         * The main engine. Converts ConfigParams into a complete Xray outbound dictionary.
-        * Now with added support for TLS fragmentation.
+        * Now correctly maps short protocol names to Xray's official protocol names.
         """
-        if params.protocol in ["hysteria", "hysteria2","hy2"]:
-            params.protocol = "socks"
+        # ! =========================================================
+        # ! === THE FINAL FIX: MAP SHORT NAMES TO XRAY'S REAL NAMES ===
+        # ! =========================================================
+        protocol_map = {
+            "vless": "vless",
+            "vmess": "vmess",
+            "trojan": "trojan",
+            "ss": "shadowsocks", # This was the main bug
+            "socks": "socks",
+            "wireguard": "wireguard",
+        }
+        
+        xray_protocol_name = protocol_map.get(params.protocol)
+        if not xray_protocol_name:
+            # This protocol is not meant for Xray (like Hysteria)
+            return None
+
         use_fragment = fragment_config is not None
         stream_settings = self._build_stream_settings(params, fragment=use_fragment, **kwargs)
 
@@ -238,7 +254,7 @@ class XrayConfigBuilder:
 
         outbound = {
             "tag": params.tag,
-            "protocol": params.protocol,
+            "protocol": xray_protocol_name, # ! Use the correct, full protocol name
             "settings": protocol_settings,
             "streamSettings": stream_settings
         }

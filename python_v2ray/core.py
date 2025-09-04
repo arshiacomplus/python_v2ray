@@ -115,7 +115,6 @@ class XrayCore:
                 return None
 
             if self._api_client is None:
-                # Lazy initialization of the API client
                 api_address = f"127.0.0.1:{self.api_port}"
                 self._api_client = XrayApiClient(api_address)
 
