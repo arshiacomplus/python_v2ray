@@ -150,11 +150,12 @@ func runTest(j TestJob, results chan<- TestResult) {
 func testProxy(listenIP string, port int) (int64, string) {
 	const maxRetries = 3
 	const retryDelay = 200 * time.Millisecond
-	var lastError string
 
+	var lastError string
+	bestPing := int64(-1)
 	for attempt := 1; attempt <= maxRetries; attempt++ {
 		targetURL := "http://www.google.com/generate_204"
-		timeout := 5 * time.Second
+		timeout := 8 * time.Second
 
 		dialer, err := proxy.SOCKS5("tcp", fmt.Sprintf("%s:%d", listenIP, port), nil, proxy.Direct)
 		if err != nil {
@@ -176,7 +177,6 @@ func testProxy(listenIP string, port int) (int64, string) {
 			time.Sleep(retryDelay)
 			continue
 		}
-
 		defer resp.Body.Close()
 
 		if resp.StatusCode != http.StatusNoContent {
@@ -185,7 +185,16 @@ func testProxy(listenIP string, port int) (int64, string) {
 			continue
 		}
 
-		return time.Since(start).Milliseconds(), "success"
+
+		currentPing := time.Since(start).Milliseconds()
+		if bestPing == -1 || currentPing < bestPing {
+
+			bestPing = currentPing
+		}
+	}
+
+	if bestPing != -1 {
+		return bestPing, "success"
 	}
 
 	return -1, lastError
