@@ -148,26 +148,45 @@ func runTest(j TestJob, results chan<- TestResult) {
 }
 
 func testProxy(listenIP string, port int) (int64, string) {
-	targetURL := "http://www.google.com/generate_204"
-	timeout := 8 * time.Second
-	dialer, err := proxy.SOCKS5("tcp", fmt.Sprintf("%s:%d", listenIP, port), nil, proxy.Direct)
-	if err != nil {
-		return -1, fmt.Sprintf("failed_dialer: %v", err)
+	const maxRetries = 3
+	const retryDelay = 200 * time.Millisecond
+	var lastError string
+
+	for attempt := 1; attempt <= maxRetries; attempt++ {
+		targetURL := "http://www.google.com/generate_204"
+		timeout := 5 * time.Second
+
+		dialer, err := proxy.SOCKS5("tcp", fmt.Sprintf("%s:%d", listenIP, port), nil, proxy.Direct)
+		if err != nil {
+			return -1, fmt.Sprintf("failed_dialer: %v", err)
+		}
+
+		transport := &http.Transport{
+			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+				return dialer.Dial(network, addr)
+			},
+		}
+		httpClient := &http.Client{Transport: transport, Timeout: timeout}
+
+		start := time.Now()
+		resp, err := httpClient.Get(targetURL)
+
+		if err != nil {
+			lastError = fmt.Sprintf("failed_http: %v (attempt %d/%d)", err, attempt, maxRetries)
+			time.Sleep(retryDelay)
+			continue
+		}
+
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusNoContent {
+			lastError = fmt.Sprintf("bad_status_%d (attempt %d/%d)", resp.StatusCode, attempt, maxRetries)
+			time.Sleep(retryDelay)
+			continue
+		}
+
+		return time.Since(start).Milliseconds(), "success"
 	}
-	transport := &http.Transport{
-		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
-			return dialer.Dial(network, addr)
-		},
-	}
-	httpClient := &http.Client{Transport: transport, Timeout: timeout}
-	start := time.Now()
-	resp, err := httpClient.Get(targetURL)
-	if err != nil {
-		return -1, fmt.Sprintf("failed_http: %v", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusNoContent {
-		return -1, fmt.Sprintf("bad_status_%d", resp.StatusCode)
-	}
-	return time.Since(start).Milliseconds(), "success"
+
+	return -1, lastError
 }
