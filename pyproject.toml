@@ -13,10 +13,11 @@ authors = [
 ]
 requires-python = ">=3.8"
 dependencies = [
-  "requests",
-  "grpcio",
-  "protobuf",
+    "requests>=2.25.0",
+    "grpcio>=1.40.0",
+    "protobuf>=3.19.0",
 ]
+
 
 classifiers = [
   "Programming Language :: Python :: 3",
