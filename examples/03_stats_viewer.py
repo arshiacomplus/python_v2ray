@@ -14,7 +14,7 @@ def main():
     * Demonstrates how to run Xray with the API enabled and fetch live stats.
     """
     # ! Replace with your own REAL and WORKING VLESS URI
-    vless_uri = "vless://8b63cf90-830c-4fd8-a911-9e84fd7a5898@172.67.74.104:443?path=%2F%3FJoin---i10VPN---Join---i10VPN---Join---i10VPN---Join---i10VPN%3Fed%3D512&security=tls&encryption=none&alpn=http%2F1.1&host=s.s.google.com.b5r.ir.&fp=chrome&type=ws&sni=b5r.ir#%40i10VPN+%F0%9F%9A%80%7C+%D8%A8%D8%A7+%D9%85%D8%A7+%D9%85%D8%AA%D8%B5%D9%84+%D8%A8%D9%85%D9%88%D9%86%E2%9A%A1"
+    vless_uri = "vless://"
 
     if "YOUR_UUID" in vless_uri:
         print("! Please replace the placeholder URI in the script with your own to run this demo.")

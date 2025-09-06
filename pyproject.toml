@@ -4,24 +4,39 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "python_v2ray"
-version = "0.0.1"
+version = "0.1.0"
 authors = [
-  { name="Your Name", email="you@example.com" },
+  { name="Arshia", email="arshiacomplus@gmail.com" },
 ]
-description = "A powerful, high-level Python wrapper for V2Ray/Xray-core."
+description = "A powerful, high-level Python wrapper for managing and testing V2Ray/Xray-core and Hysteria clients."
 readme = "README.md"
+license = { file = "LICENSE" } 
 requires-python = ">=3.8"
+keywords = ["v2ray", "xray", "hysteria", "proxy", "tester", "api", "wrapper"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: GNU General Public License v3 (GPLv3)",
+    "Operating System :: OS Independent",
+    "Intended Audience :: Developers",
+    "Topic :: Internet :: Proxy Servers",
+    "Topic :: System :: Networking",
+]
+
 dependencies = [
-    "grpcio",
-    "grpcio-tools",
     "requests",
+    "grpcio",
+    "protobuf",
 ]
 
 [project.urls]
 "Homepage" = "https://github.com/arshiacomplus/python_v2ray"
 "Bug Tracker" = "https://github.com/arshiacomplus/python_v2ray/issues"
 
-[tool.setuptools.packages.find]
-where = ["."]
-include = ["python_v2ray*"]
-exclude = ["examples*", "tests*", "core_engine*", "vendor*"]
+[tool.setuptools]
+packages = ["python_v2ray", "python_v2ray.protos.app.stats.command"]
+
+[tool.setuptools.package-data]
+python_v2ray = [
+    "vendor/*",
+    "core_engine/*",
+]

@@ -1,4 +1,4 @@
-import subprocess, json, os, sys, time, logging
+import subprocess, json, os, sys, time, logging, socket
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 
@@ -19,7 +19,7 @@ class ConnectionTester:
             self.tester_exe, self.xray_exe, self.hysteria_exe = "core_engine_linux", "xray_linux", "hysteria_linux"
         if not (self.core_engine_path / self.tester_exe).is_file(): raise FileNotFoundError("Tester executable not found")
 
-    def test_uris(self, parsed_params: List[ConfigParams], fragment_config: Optional[Dict[str, Any]] = None, timeout: int = 90) -> List[Dict[str, Any]]:
+    def test_uris(self, parsed_params: List[ConfigParams], fragment_config: Optional[Dict[str, Any]] = None, mux_config: Optional[Dict[str, Any]] = None, timeout: int = 90) -> List[Dict[str, Any]]:
         """
         * Takes a list of PRE-PARSED ConfigParams objects and tests them using the correct client.
         """
@@ -28,7 +28,6 @@ class ConnectionTester:
         hysteria_params = []
         xray_params = []
 
-        # ! FIX: Iterate over the list of OBJECTS, don't re-parse them.
         for params in parsed_params:
             if params.protocol in ["hysteria", "hysteria2", "hy2"]:
                 hysteria_params.append(params)
@@ -53,12 +52,34 @@ class ConnectionTester:
                 inbound_port = base_port + i
                 inbound_tag = f"inbound_{i}"
 
-                outbound = builder.build_outbound_from_params(params, fragment_config=fragment_config)
-                builder.add_outbound(outbound)
+                # outbound = builder.build_outbound_from_params(params, fragment_config=fragment_config)
+                # builder.add_outbound(outbound)
 
-                builder.add_inbound({"tag": inbound_tag, "port": inbound_port, "listen": "127.0.0.1", "protocol": "socks", "settings": {"auth": "noauth", "udp": True, "userLevel": 0}})
-                builder.config["routing"]["rules"].append({"type": "field", "inboundTag": [inbound_tag], "outboundTag": outbound["tag"]})
-                tests_to_run.append({"tag": outbound["tag"], "test_port": inbound_port, "listen_ip": "127.0.0.1"})
+                # builder.add_inbound({"tag": inbound_tag, "port": inbound_port, "listen": "127.0.0.1", "protocol": "socks", "settings": {"auth": "noauth", "udp": True, "userLevel": 0}})
+                # builder.config["routing"]["rules"].append({"type": "field", "inboundTag": [inbound_tag], "outboundTag": outbound["tag"]})
+                # tests_to_run.append({"tag": outbound["tag"], "test_port": inbound_port, "listen_ip": "127.0.0.1"})
+
+                outbound = builder.build_outbound_from_params(params)
+
+                if mux_config and not params.mux_enabled:
+                    if "mux" not in outbound:
+                        outbound["mux"] = {}
+                    outbound["mux"]["enabled"] = mux_config.get("enabled", True)
+                    outbound["mux"]["concurrency"] = mux_config.get("concurrency", 8)
+
+                outbound_tag_for_routing = outbound["tag"]
+                if fragment_config and not params.fragment_enabled:
+                    outbound_tag_for_routing = "fragment"
+
+                builder.add_outbound(outbound)
+                builder.add_inbound({
+                    "tag": inbound_tag, "port": inbound_port, "listen": "127.0.0.1",
+                    "protocol": "socks", "settings": {"auth": "noauth", "udp": True, "userLevel": 0}
+                })
+                builder.config["routing"]["rules"].append({
+                    "type": "field", "inboundTag": [inbound_tag], "outboundTag": outbound_tag_for_routing
+                })
+                tests_to_run.append({"tag": params.tag, "test_port": inbound_port, "listen_ip": "127.0.0.1"})
 
             builder.add_outbound({"protocol": "freedom", "tag": "direct"})
             builder.add_outbound({"protocol": "blackhole", "tag": "block"})
@@ -73,13 +94,26 @@ class ConnectionTester:
             try:
                 xray_process = subprocess.Popen([str(self.vendor_path / self.xray_exe), "-c", str(temp_config_path)])
                 logging.info(f"Merged Xray instance started (PID: {xray_process.pid}). Waiting for initialization...")
-                time.sleep(1.5)
+                last_port_to_check = base_port + len(xray_params) - 1
+                is_ready = False
+                for _ in range(20):
+                    try:
+                        with socket.create_connection(("127.0.0.1", last_port_to_check), timeout=0.25):
+                            is_ready = True
+                            logging.info("Xray instance is ready.")
+                            break
+                    except (socket.timeout, ConnectionRefusedError):
+                        time.sleep(0.25)
+
+                if not is_ready:
+                    logging.error("Xray instance failed to start up in time. Stopping test.")
+                    raise RuntimeError("Xray startup timeout")
                 logging.info(f"Sending {len(tests_to_run)} Xray test jobs to Go engine...")
                 xray_results = self._run_go_tester(tests_to_run, timeout)
                 all_results.extend(xray_results)
             finally:
                 if xray_process: xray_process.terminate(); xray_process.wait()
-                if temp_config_path.exists(): temp_config_path.unlink()
+                # if temp_config_path.exists(): temp_config_path.unlink()
 
         return all_results
 

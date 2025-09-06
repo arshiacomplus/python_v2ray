@@ -60,6 +60,14 @@ class ConfigParams:
     hy2_obfs: Optional[str] = ""
     hy2_obfs_password: Optional[str] = ""
 
+    # * Mvless Extra Fields
+    mux_enabled: bool = False
+    mux_concurrency: int = 8
+    fragment_enabled: bool = False
+    fragment_packets: Optional[str] = ""
+    fragment_length: Optional[str] = ""
+    fragment_interval: Optional[str] = ""
+
 
 def _parse_query_params(query: str) -> Dict[str, str]:
     """* A utility to parse URL query parameters into a dictionary."""
@@ -83,7 +91,7 @@ def parse_uri(config_uri: str) -> Optional[ConfigParams]:
                 return None
 
         parser_map = {
-            "vless": _parse_vless, "vmess": _parse_vmess, "trojan": _parse_trojan,
+            "vless": _parse_vless, "mvless": _parse_vless, "vmess": _parse_vmess, "trojan": _parse_trojan,
             "ss": _parse_shadowsocks, "socks": _parse_socks, "wireguard": _parse_wireguard,
             "hysteria": _parse_hysteria, "hysteria2": _parse_hysteria, "hy2": _parse_hysteria,
         }
@@ -102,8 +110,10 @@ def parse_uri(config_uri: str) -> Optional[ConfigParams]:
         elif protocol != 'vmess':
             print(f"! Could not extract host/port from URI. Skipping: {uri[:40]}...")
             return None
-
-        return parser(uri, common)
+        params = parser(uri, common)
+        if protocol == "mvless" and params:
+            _parse_mvless_extensions(params, uri)
+        return params
 
     except Exception as e:
         print(f"! CRITICAL ERROR while parsing URI '{config_uri[:30]}...': {e}")
@@ -122,6 +132,25 @@ def _parse_vless(uri: str, common: dict) -> ConfigParams:
         fp=params.get("fp", ""), alpn=params.get("alpn", ""), flow=params.get("flow", ""),
         encryption=params.get("encryption", "none"),
     )
+def _parse_mvless_extensions(params: ConfigParams, uri: str):
+    """Parses Mux and Fragment parameters specific to the Mvless protocol and modifies the ConfigParams object."""
+    try:
+        query_params = urllib.parse.parse_qs(urllib.parse.urlparse(uri).query)
+        if 'mux' in query_params and query_params['mux'][0].upper() == 'ON':
+            params.mux_enabled = True
+            if 'muxConcurrency' in query_params:
+                try:
+                    params.mux_concurrency = int(query_params['muxConcurrency'][0])
+                except (ValueError, IndexError):
+                    pass
+
+        if 'packets' in query_params and 'length' in query_params and 'interval' in query_params:
+            params.fragment_enabled = True
+            params.fragment_packets = query_params['packets'][0]
+            params.fragment_length = query_params['length'][0]
+            params.fragment_interval = query_params['interval'][0]
+    except Exception as e:
+        print(f"! Error parsing mvless extensions: {e}")
 
 def _parse_vmess(uri: str, common: dict) -> ConfigParams:
     encoded_part = uri.replace("vmess://", "")
@@ -230,18 +259,16 @@ class XrayConfigBuilder:
         * The main engine. Converts ConfigParams into a complete Xray outbound dictionary.
         * Now correctly maps short protocol names to Xray's official protocol names.
         """
-        # ! =========================================================
-        # ! === THE FINAL FIX: MAP SHORT NAMES TO XRAY'S REAL NAMES ===
-        # ! =========================================================
         protocol_map = {
             "vless": "vless",
+            "mvless" : "mvless",
             "vmess": "vmess",
             "trojan": "trojan",
-            "ss": "shadowsocks", # This was the main bug
+            "ss": "shadowsocks",
             "socks": "socks",
             "wireguard": "wireguard",
         }
-        
+
         xray_protocol_name = protocol_map.get(params.protocol)
         if not xray_protocol_name:
             # This protocol is not meant for Xray (like Hysteria)
@@ -251,7 +278,11 @@ class XrayConfigBuilder:
         stream_settings = self._build_stream_settings(params, fragment=use_fragment, **kwargs)
 
         protocol_settings = self._build_protocol_settings(params)
-
+        if params.protocol == "mvless" and params.mux_enabled:
+            try:
+                outbound["mux"] = {"enabled": True  if  outbound["mux"].upper() == "ON" else False , "concurrency": params.mux_concurrency}
+            except Exception:
+                print("! No mux found in mvless")
         outbound = {
             "tag": params.tag,
             "protocol": xray_protocol_name, # ! Use the correct, full protocol name
@@ -277,17 +308,28 @@ class XrayConfigBuilder:
                 stream_settings["tlsSettings"] = security_settings
 
         header_config = {"type": params.header_type if params.header_type else "none"}
-        if params.header_type == "http":
-            header_config["request"] = {"method": "GET", "path": ["/"], "headers": {"Host": [params.host], "User-Agent": ["Mozilla/5.0"], "Connection": ["keep-alive"]}}
+        host_for_header = params.host if params.host else params.sni
 
         network_map = {
             "tcp":  {"tcpSettings":  {"header": header_config}}, "kcp":  {"kcpSettings":  {"header": header_config, "seed": params.path}},
-            "ws":   {"wsSettings":   {"path": params.path, "headers": {"Host": params.host}}}, "h2":   {"httpSettings": {"host": [params.host], "path": params.path}},
-            "quic": {"quicSettings": {"security": params.host, "key": params.path, "header": header_config}}, "grpc": {"grpcSettings": {"serviceName": params.path, "multiMode": (params.mode == "multi")}},
+            "ws":   {"wsSettings":   {"path": params.path, "headers": {"Host": host_for_header}}},
+            "h2":   {"httpSettings": {"host": [host_for_header], "path": params.path}},
+            "quic": {"quicSettings": {"security": params.host, "key": params.path, "header": header_config}},
+            "grpc": {"grpcSettings": {"serviceName": params.path, "multiMode": (params.mode == "multi")}},
         }
         stream_settings.update(network_map.get(params.network, {}))
+        if params.protocol == "mvless" and params.fragment_enabled:
+             stream_settings["fragment"] = {
+                "packets": params.fragment_packets,
+                "length": params.fragment_length,
+                "interval": params.fragment_interval
+            }
 
-        if kwargs.get("fragment"): stream_settings["sockopt"] = {"dialerProxy": "fragment", "mark": 255}
+
+
+        if kwargs.get("fragment_config") and not params.fragment_enabled:
+             stream_settings["sockopt"] = {"dialerProxy": "fragment"}
+
         return stream_settings
     def add_fragment_outbound(self, fragment_config: Dict[str, Any]):
         """
@@ -314,7 +356,11 @@ class XrayConfigBuilder:
     def _build_protocol_settings(self, params: ConfigParams) -> Dict[str, Any]:
         level = 0
         protocol = params.protocol
-        if protocol == "vless": return {"vnext": [{"address": params.address, "port": params.port, "users": [{"id": params.id, "flow": params.flow, "encryption": "none", "level": level}]}]}
+        if protocol in ["vless", "mvless"]:
+            settings = {"vnext": [{"address": params.address, "port": params.port, "users": [{"id": params.id, "flow": params.flow, "encryption": "none", "level": level}]}]}
+            if protocol == "mvless" and params.fragment_enabled:
+                pass
+            return settings
         elif protocol == "vmess": return {"vnext": [{"address": params.address, "port": params.port, "users": [{"id": params.id, "alterId": params.alter_id, "security": params.scy, "level": level}]}]}
         elif protocol == "trojan": return {"servers": [{"address": params.address, "port": params.port, "password": params.password, "level": level}]}
         elif protocol == "ss":

@@ -31,12 +31,10 @@ class Outbound:
             "settings": self.settings,
         }
         if self.stream_settings:
-            # fixme: This needs to be expanded to handle all stream types correctly.
             stream_dict = {
                 "network": self.stream_settings.network,
                 "security": self.stream_settings.security,
             }
-            # Merge extra settings like wsSettings, grpcSettings
             stream_dict.update(self.stream_settings.extra_settings)
             data["streamSettings"] = stream_dict
 
