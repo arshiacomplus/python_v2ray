@@ -1,3 +1,33 @@
 [build-system]
-requires = ["setuptools>=61.0"]
+requires = ["setuptools>=61.0", "wheel"]
 build-backend = "setuptools.build_meta"
+
+[project]
+name = "python_v2ray"
+version = "0.1.2"
+description = "A powerful, high-level Python wrapper for managing and testing V2Ray/Xray-core and Hysteria clients."
+readme = "README.md"
+license = "GPL-3.0-only"
+authors = [
+  { name="arshiacomplus", email="arshiacomplus@gmail.com" },
+]
+requires-python = ">=3.8"
+dependencies = [
+  "requests",
+  "grpcio",
+  "protobuf",
+]
+
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "Operating System :: OS Independent",
+  "Intended Audience :: Developers",
+  "Topic :: Internet :: Proxy Servers",
+  "Topic :: System :: Networking",
+]
+
+[tool.setuptools]
+packages = ["python_v2ray"]
+
+[tool.setuptools.package-data]
+python_v2ray = ["vendor/*", "core_engine/*"]
