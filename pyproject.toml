@@ -6,16 +6,19 @@ build-backend = "setuptools.build_meta"
 name = "python_v2ray"
 version = "0.1.0"
 authors = [
-  { name="Arshia", email="arshiacomplus@gmail.com" },
+  { name="arshiacomplus", email="arshiacomplus@gmail.com" },
 ]
 description = "A powerful, high-level Python wrapper for managing and testing V2Ray/Xray-core and Hysteria clients."
 readme = "README.md"
-license = { file = "LICENSE" } 
+
+license = "GPL-3.0-only"
+license-files = ["LICENSE"]
+
 requires-python = ">=3.8"
 keywords = ["v2ray", "xray", "hysteria", "proxy", "tester", "api", "wrapper"]
 classifiers = [
     "Programming Language :: Python :: 3",
-    "License :: OSI Approved :: GNU General Public License v3 (GPLv3)",
+    # "License :: OSI Approved :: GNU General Public License v3 (GPLv3)", # <-- This line is now removed as requested by the warning.
     "Operating System :: OS Independent",
     "Intended Audience :: Developers",
     "Topic :: Internet :: Proxy Servers",
