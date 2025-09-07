@@ -4,12 +4,12 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "python_v2ray"
-version = "0.1.0"
+version = "0.1.2"
 description = "A powerful, high-level Python wrapper for managing and testing V2Ray/Xray-core and Hysteria clients."
 readme = "README.md"
 license = { text = "GPL-3.0-only" }
 authors = [
-  { name="Arshia", email="arshiacomplus@gmail.com" },
+  { name="arshiacomplus", email="arshiacomplus@gmail.com" },
 ]
 requires-python = ">=3.8"
 dependencies = [
@@ -32,4 +32,4 @@ classifiers = [
 packages = ["python_v2ray"]
 
 [tool.setuptools.package-data]
-python_v2ray = ["vendor/*", "core_engine/*"]
+python_v2ray = ["vendor/*", "core_engine/*", "protos/**/*"]
