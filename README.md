@@ -108,10 +108,8 @@ This project would not be possible without the incredible work of the teams behi
 - **[GFW-knocker/Xray-core](https://github.com/GFW-knocker/Xray-core)** for the powerful and versatile Xray-core.
 - **[apernet/hysteria](https://github.com/apernet/hysteria)** for the feature-rich, high-performance Hysteria proxy.
 
-## 🤝 Contributing
-
-Contributions are welcome! Please see our [contribution guidelines](link/to/contributing.md) for more details.
 
 ## 📜 License
 
 Distributed under the GNU General Public License v3.0. See `LICENSE` for more information.
+
