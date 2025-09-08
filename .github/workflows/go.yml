@@ -70,14 +70,28 @@ jobs:
     needs: build-and-release
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: Create dummy commit for release
+        run: |
+          echo "Release ${{ github.event.inputs.tag_name }}" > RELEASE_TAG.txt
+          git config user.name "github-actions"
+          git config user.email "github-actions@github.com"
+          git add RELEASE_TAG.txt
+          git commit -m "chore: prepare release ${{ github.event.inputs.tag_name }}"
+          git push origin HEAD:main
+      
       - name: Download all build artifacts
         uses: actions/download-artifact@v4
         with:
           path: artifacts
+
       - name: Create Release and Upload Assets
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.event.inputs.tag_name }}
           name: "Release ${{ github.event.inputs.tag_name }}"
-          body: ""   
+          body: ""
           files: artifacts/**/*.zip
