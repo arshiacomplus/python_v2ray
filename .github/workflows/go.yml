@@ -32,6 +32,8 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-go@v5
         with:
           go-version: '1.22'
@@ -72,15 +74,21 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
 
+    
+      - name: Set release commit
+        run: echo "RELEASE_COMMIT=$(git rev-parse HEAD)" >> $GITHUB_ENV
+        
+
   
-      - name: Create empty commit for release
+      - name: Create tag on specific commit
         run: |
           git config user.name "github-actions"
           git config user.email "github-actions@github.com"
-          git commit --allow-empty -m "chore: release ${{ github.event.inputs.tag_name }}"
-          git push origin HEAD:main
+          git tag ${{ github.event.inputs.tag_name }} ${{ env.RELEASE_COMMIT }}
+          git push origin ${{ github.event.inputs.tag_name }}
 
       - name: Download all build artifacts
         uses: actions/download-artifact@v4
@@ -92,5 +100,5 @@ jobs:
         with:
           tag_name: ${{ github.event.inputs.tag_name }}
           name: Release ${{ github.event.inputs.tag_name }}
-          body: ""
+          body: "Installation"
           files: artifacts/**/*.zip
