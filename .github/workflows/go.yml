@@ -45,8 +45,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
-
-      # 🔹 Commit خالی ایجاد می‌کنیم تا release روی commit جدید باشه
+          
       - name: Create empty commit for release
         run: |
           git config user.name "github-actions"
@@ -64,5 +63,5 @@ jobs:
         with:
           tag_name: ${{ github.event.inputs.tag_name }}
           name: Release ${{ github.event.inputs.tag_name }}
-          body: ""
+          body: "" 
           files: artifacts/**/*.zip
