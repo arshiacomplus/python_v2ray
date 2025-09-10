@@ -311,12 +311,18 @@ class XrayConfigBuilder:
         host_for_header = params.host if params.host else params.sni
 
         network_map = {
-            "tcp":  {"tcpSettings":  {"header": header_config}}, "kcp":  {"kcpSettings":  {"header": header_config, "seed": params.path}},
+            "tcp":  {"tcpSettings":  {"header": header_config}},
+            "kcp":  {"kcpSettings":  {"header": header_config, "seed": params.path}},
             "ws":   {"wsSettings":   {"path": params.path, "headers": {"Host": host_for_header}}},
+            "httpupgrade": {"httpupgradeSettings":{"host": [host_for_header], "path": params.path}},
+            "xhttp": {"xhttpSettings":{"host": [host_for_header], "path": params.path}},
+            "splithttp":  {"splithttpSettings":{"host": [host_for_header], "path": params.path}},
             "h2":   {"httpSettings": {"host": [host_for_header], "path": params.path}},
             "quic": {"quicSettings": {"security": params.host, "key": params.path, "header": header_config}},
             "grpc": {"grpcSettings": {"serviceName": params.path, "multiMode": (params.mode == "multi")}},
+
         }
+
         stream_settings.update(network_map.get(params.network, {}))
         if params.protocol == "mvless" and params.fragment_enabled:
              stream_settings["fragment"] = {
