@@ -123,7 +123,6 @@ func main() {
 	fmt.Println(string(outputData))
 }
 func runUploadTest(j UploadTestJob, results chan<- UploadTestResult) {
-	// Create a reader that generates a stream of zero bytes for the upload payload
 	payloadReader := io.LimitReader(strings.NewReader(strings.Repeat("\x00", 1024)), int64(j.UploadBytes))
 
 	dialer, err := proxy.SOCKS5("tcp", fmt.Sprintf("%s:%d", j.ListenIP, j.TestPort), nil, proxy.Direct)
@@ -155,8 +154,6 @@ func runUploadTest(j UploadTestJob, results chan<- UploadTestResult) {
 	}
 	defer resp.Body.Close()
 
-	// We don't need to read the body, but closing it is important.
-	// The test is complete once the request is fully sent.
 	duration := time.Since(start).Seconds()
 
 	if resp.StatusCode != http.StatusOK {
@@ -179,7 +176,7 @@ func runUploadTest(j UploadTestJob, results chan<- UploadTestResult) {
 		BytesUploaded: int64(j.UploadBytes),
 	}
 }
-func runSpeedTest(j SpeedTestJob, results chan<- SpeedTestResult) {.
+func runSpeedTest(j SpeedTestJob, results chan<- SpeedTestResult) {
 	fullURL := fmt.Sprintf("%s?bytes=%d", j.DownloadURL, j.DownloadBytes)
 
 	dialer, err := proxy.SOCKS5("tcp", fmt.Sprintf("%s:%d", j.ListenIP, j.TestPort), nil, proxy.Direct)
