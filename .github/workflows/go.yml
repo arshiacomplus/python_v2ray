@@ -7,6 +7,10 @@ on:
         description: 'The tag name for the release (e.g., v0.1.0-test)'
         required: true
         default: 'v0.1.0-alpha'
+      release_body:
+        description: 'The release notes/body for the release.'
+        required: true
+        default: 'This is a new release.'
 
 jobs:
   build-and-release:
@@ -100,5 +104,5 @@ jobs:
         with:
           tag_name: ${{ github.event.inputs.tag_name }}
           name: Release ${{ github.event.inputs.tag_name }}
-          body: "Installation"
+          body: ${{ github.event.inputs.release_body }}
           files: artifacts/**/*.zip
