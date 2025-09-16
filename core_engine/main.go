@@ -76,7 +76,6 @@ func main() {
 
 		wg.Add(1)
 
-		// Dispatch based on unique keys
 		if _, isUploadTest := temp["upload_url"]; isUploadTest {
 			var job UploadTestJob
 			json.Unmarshal(rawJob, &job)
@@ -114,7 +113,7 @@ func main() {
 				mu.Lock()
 				finalResults = append(finalResults, result)
 				mu.Unlock()
-			}(j)
+			}(job)
 		}
 	}
 
@@ -122,6 +121,8 @@ func main() {
 	outputData, _ := json.Marshal(finalResults)
 	fmt.Println(string(outputData))
 }
+
+
 func runUploadTest(j UploadTestJob, results chan<- UploadTestResult) {
 	payloadReader := io.LimitReader(strings.NewReader(strings.Repeat("\x00", 1024)), int64(j.UploadBytes))
 
