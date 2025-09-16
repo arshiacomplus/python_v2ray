@@ -124,7 +124,7 @@ func main() {
 
 
 func runUploadTest(j UploadTestJob, results chan<- UploadTestResult) {
-	payloadReader := io.LimitReader(strings.NewReader(strings.Repeat("\x00", 1024)), int64(j.UploadBytes))
+	payloadReader := io.LimitReader(io.Zero, int64(j.UploadBytes))
 
 	dialer, err := proxy.SOCKS5("tcp", fmt.Sprintf("%s:%d", j.ListenIP, j.TestPort), nil, proxy.Direct)
 	if err != nil {
