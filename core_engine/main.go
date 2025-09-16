@@ -59,6 +59,18 @@ type UploadTestResult struct {
 	UploadMbps    float64 `json:"upload_mbps"`
 	BytesUploaded int64   `json:"bytes_uploaded"`
 }
+
+type zeroReader struct{}
+
+func (z zeroReader) Read(p []byte) (n int, err error) {
+	for i := range p {
+		p[i] = 0
+	}
+	return len(p), nil
+}
+
+
+
 func main() {
 	inputData, err := io.ReadAll(os.Stdin)
 	if err != nil { os.Exit(1) }
@@ -122,23 +134,20 @@ func main() {
 	fmt.Println(string(outputData))
 }
 
-
 func runUploadTest(j UploadTestJob, results chan<- UploadTestResult) {
-	payloadReader := io.LimitReader(io.Zero, int64(j.UploadBytes))
+	payloadReader := io.LimitReader(zeroReader{}, int64(j.UploadBytes))
 
 	dialer, err := proxy.SOCKS5("tcp", fmt.Sprintf("%s:%d", j.ListenIP, j.TestPort), nil, proxy.Direct)
 	if err != nil {
 		results <- UploadTestResult{Tag: j.Tag, Status: "error: dialer creation failed"}
 		return
 	}
-
 	transport := &http.Transport{
 		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
 			return dialer.Dial(network, addr)
 		},
 	}
 	httpClient := &http.Client{Transport: transport, Timeout: 45 * time.Second}
-
 	req, err := http.NewRequest("POST", j.UploadURL, payloadReader)
 	if err != nil {
 		results <- UploadTestResult{Tag: j.Tag, Status: fmt.Sprintf("error: request creation failed: %v", err)}
@@ -146,7 +155,6 @@ func runUploadTest(j UploadTestJob, results chan<- UploadTestResult) {
 	}
 	req.Header.Set("Content-Type", "application/octet-stream")
 	req.ContentLength = int64(j.UploadBytes)
-
 	start := time.Now()
 	resp, err := httpClient.Do(req)
 	if err != nil {
@@ -154,22 +162,16 @@ func runUploadTest(j UploadTestJob, results chan<- UploadTestResult) {
 		return
 	}
 	defer resp.Body.Close()
-
 	duration := time.Since(start).Seconds()
-
 	if resp.StatusCode != http.StatusOK {
 		results <- UploadTestResult{Tag: j.Tag, Status: fmt.Sprintf("error: bad status %d", resp.StatusCode)}
 		return
 	}
-
 	if duration == 0 {
 		results <- UploadTestResult{Tag: j.Tag, Status: "error: division by zero"}
 		return
 	}
-
-	// Speed in Megabits per second
 	uploadMbps := (float64(j.UploadBytes) * 8) / (duration * 1024 * 1024)
-
 	results <- UploadTestResult{
 		Tag:           j.Tag,
 		Status:        "success",
