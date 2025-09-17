@@ -6,7 +6,8 @@ from .hysteria_manager import HysteriaCore
 from .core import XrayCore
 from .config_parser import ConfigParams, XrayConfigBuilder
 from contextlib import contextmanager
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError as FuturesTimeoutError
+
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - [%(levelname)s] - %(message)s')
 class ConnectionTester:
     def __init__(self, vendor_path: str, core_engine_path: str):
@@ -19,7 +20,7 @@ class ConnectionTester:
         else:
             self.tester_exe, self.xray_exe, self.hysteria_exe = "core_engine_linux", "xray_linux", "hysteria_linux"
         if not (self.core_engine_path / self.tester_exe).is_file(): raise FileNotFoundError("Tester executable not found")
-    def test_uris(self, parsed_params: List[ConfigParams], fragment_config: Optional[Dict[str, Any]] = None, mux_config: Optional[Dict[str, Any]] = None, timeout: int = 90) -> List[Dict[str, Any]]:
+    def test_uris(self, parsed_params: List[ConfigParams], fragment_config: Optional[Dict[str, Any]] = None, mux_config: Optional[Dict[str, Any]] = None, timeout: int = 90 , warp_config: Optional[ConfigParams] = None) -> List[Dict[str, Any]]:
         """
         * Takes a list of PRE-PARSED ConfigParams objects and tests them using the correct client.
         """
@@ -40,6 +41,9 @@ class ConnectionTester:
             logging.info(f"Testing {len(xray_params)} Xray configuration(s) with one merged instance...")
             base_port = 20800
             builder = XrayConfigBuilder()
+            if warp_config:
+                logging.info(f"Enabling WARP-on-Any mode for connectivity test.")
+                builder.add_warp_outbound(warp_config)
             tests_to_run = []
             for i, params in enumerate(xray_params):
                 inbound_port = base_port + i
@@ -97,7 +101,7 @@ class ConnectionTester:
                 if xray_process: xray_process.terminate(); xray_process.wait()
                 # if temp_config_path.exists(): temp_config_path.unlink()
         return all_results
-    def test_speed(self, parsed_params: List[ConfigParams], download_bytes: int = 10000000, download_url: str = "https://speed.cloudflare.com/__down", timeout: int = 60) -> List[Dict[str, Any]]:
+    def test_speed(self, parsed_params: List[ConfigParams], download_bytes: int = 10000000, download_url: str = "https://speed.cloudflare.com/__down", timeout: int = 60,warp_config: Optional[ConfigParams] = None) -> List[Dict[str, Any]]:
         if not parsed_params:
             return []
         logging.info(f"Orchestrating proxies for speed test on {len(parsed_params)} configs...")
@@ -118,6 +122,9 @@ class ConnectionTester:
                 xray_params_to_merge.append((params, local_port))
         if xray_params_to_merge:
             builder = XrayConfigBuilder()
+            if warp_config:
+                logging.info(f"Enabling WARP-on-Any mode with config: {warp_config.tag}")
+                builder.add_warp_outbound(warp_config)
             for params, local_port in xray_params_to_merge:
                 builder.add_inbound({
                     "tag": f"inbound-{local_port}", "port": local_port, "listen": "127.0.0.1",
@@ -143,7 +150,7 @@ class ConnectionTester:
             for proxy in reversed(proxies_to_manage):
                 proxy.stop()
         return results
-    def test_upload(self, parsed_params: List[ConfigParams], upload_bytes: int = 5000000, upload_url: str = "https://speed.cloudflare.com/__up", timeout: int = 60) -> List[Dict[str, Any]]:
+    def test_upload(self, parsed_params: List[ConfigParams], upload_bytes: int = 5000000, upload_url: str = "https://speed.cloudflare.com/__up", timeout: int = 60,warp_config: Optional[ConfigParams] = None) -> List[Dict[str, Any]]:
         if not parsed_params:
             return []
         logging.info(f"Orchestrating proxies for upload test on {len(parsed_params)} configs...")
@@ -164,6 +171,9 @@ class ConnectionTester:
                 xray_params_to_merge.append((params, local_port))
         if xray_params_to_merge:
             builder = XrayConfigBuilder()
+            if warp_config:
+                logging.info(f"Enabling WARP-on-Any mode with config: {warp_config.tag}")
+                builder.add_warp_outbound(warp_config)
             for params, local_port in xray_params_to_merge:
                 builder.add_inbound({
                     "tag": f"inbound-{local_port}", "port": local_port, "listen": "127.0.0.1",
@@ -189,7 +199,7 @@ class ConnectionTester:
             for proxy in reversed(proxies_to_manage):
                 proxy.stop()
         return results
-    def _run_go_tester(self, payload: List[Dict[str, Any]], timeout: int) -> List[Dict[str, Any]]:
+    def _run_go_tester(self, payload: List[Dict[str, Any]], timeout: int = 30) -> List[Dict[str, Any]]:
         if not payload:
             return []
         input_json = json.dumps(payload)
@@ -207,11 +217,17 @@ class ConnectionTester:
                     logging.error(f"Go engine exited with non-zero code: {process.returncode}")
                     return []
                 return json.loads(stdout) if stdout else []
-        except subprocess.TimeoutExpired:
-            logging.error(f"Go engine timed out after {timeout} seconds.")
+        except FuturesTimeoutError:
+            logging.error(f"Go engine timed out after {timeout} seconds. Terminating process.")
+            process.kill()
+            _, stderr = process.communicate()
+            if stderr:
+                logging.error(f"Go engine error log (on timeout):\n{stderr}")
             return []
         except Exception as e:
             logging.error(f"An error occurred while running the Go tester: {e}")
+            if process.poll() is None:
+                process.kill()
             return []
     def _test_individual_clients(self, params_list: List[ConfigParams], client_exe: str, protocol_name: str, timeout: int) -> List[Dict[str, Any]]:
         test_jobs = []
