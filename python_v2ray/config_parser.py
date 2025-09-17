@@ -456,24 +456,14 @@ def load_configs(
         logging.info(f"Loading configs from file: {source}")
         content = source.read_text('utf-8').strip()
         if is_subscription:
-            # If the file content is itself a subscription URL, fetch it.
-            # If the file contains multiple URIs (a subscription file), this path is incorrect.
-            # For now, assuming content is a URL if is_subscription is True for Path.
             raw_uris = fetch_from_subscription(content)
         else:
             raw_uris = [line.strip() for line in content.splitlines() if line.strip()]
     else:
         logging.error(f"Unsupported source type or invalid path: {source}")
         return []
-
-    # Ensure raw_uris is definitely a list before processing.
-    # This is logically redundant as raw_uris should already be a list.
     raw_uris = list(raw_uris)
-
-    # The list comprehension inherently creates a list.
     parsed_configs = [p for p in (parse_uri(uri) for uri in raw_uris) if p]
-
-    # Explicitly ensure the returned object is a list, though the comprehension already does this.
     return list(parsed_configs)
 def deduplicate_configs(configs: List[ConfigParams]) -> List[ConfigParams]:
     """
