@@ -1,105 +1,100 @@
 # examples/02_config_builder.py
 
 import time
-from pathlib import Path
+import os
+import sys
 import json
+from pathlib import Path # NEW: Import Path for cleaner path handling
 
+# * This ensures the script can find our local library files
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from python_v2ray.downloader import BinaryDownloader
-from python_v2ray.core import XrayCore
-from python_v2ray.config_parser import parse_uri, XrayConfigBuilder
+from python_v2ray.core import XrayCore # Keep for XrayCore management in the demo
+from python_v2ray.config_parser import parse_uri, XrayConfigBuilder, ConfigParams # NEW: Import ConfigParams
+from python_v2ray.tester import ConnectionTester # NEW: Import ConnectionTester for unified testing
 
-def run_test_with_uri(vendor_dir: Path, uri: str):
+def run_test_with_uri(
+    vendor_path: str, # Changed from xray_path to vendor_path
+    core_engine_path: str, # NEW: Added core_engine_path
+    uri: str
+):
     """
-    A helper function to test a single URI from start to finish.
-    It builds a config, runs Xray, waits, and then stops.
+    * A helper function to test a single URI from start to finish using the ConnectionTester.
     """
     print("\n" + "="*60)
     print(f"* Testing URI: {uri[:50]}...")
     print("="*60)
 
-    # Step A: Parse the URI
     params = parse_uri(uri)
     if not params:
         print("! TEST FAILED: Could not parse the URI.")
         return
 
-    print(f"* PARSING SUCCESS: Protocol='{params.protocol}', Address='{params.address}:{params.port}'")
+    # Now we have display_tag from ConfigParams
+    print(f"* PARSING SUCCESS: Protocol='{params.protocol}', Address='{params.address}:{params.port}', Display Tag='{params.display_tag}'")
+    # print(f"* Full Params: {params}") # note: Uncomment for deep debugging
 
-    # Step B: Build the configuration
-    print("\n* Building full Xray config...")
-    builder = XrayConfigBuilder()
+    print("\n* Building full Xray config (internally by ConnectionTester)...")
 
-    # Add inbound with a specific tag
-    builder.add_inbound({
-        "port": 10808, "listen": "127.0.0.1", "protocol": "socks",
-        "settings": {"auth": "noauth", "udp": True},
-        "tag": "socks_in" # Add a tag to reference in routing
-    })
+    # Initialize ConnectionTester
+    tester = ConnectionTester(vendor_path=vendor_path, core_engine_path=core_engine_path)
 
-    # Build and add outbound
-    outbound_dict = builder.build_outbound_from_params(params)
-    builder.add_outbound(outbound_dict)
+    # Use test_uris method which handles XrayCore lifecycle and config building
+    # We pass a list of one ConfigParams object.
+    results = tester.test_uris(parsed_params=[params], timeout=30)  # Added timeout
 
-    # Add a routing rule to connect inbound to outbound
-    builder.config["routing"]["rules"].append({
-        "type": "field",
-        "inboundTag": ["socks_in"],
-        "outboundTag": outbound_dict["tag"]
-    })
-
-    print("* Final JSON config generated:")
-
-    print(json.dumps(builder.config, indent=2))
-
-    # Step C: Run Xray with the generated config
-    print("\n* Attempting to start Xray core...")
-    try:
-        with XrayCore(vendor_dir=str(vendor_dir), config_builder=builder) as xray:
-            if xray.is_running():
-                print("\n* SUCCESS! Xray is running with this config.")
-                print("* Local SOCKS proxy is available on 127.0.0.1:10808")
-                print("* Running for 5 seconds before next test...")
-                time.sleep(5)
+    print("\n* Test results from ConnectionTester:")
+    if results:
+        for result in results:
+            tag = result.get('tag', 'N/A')
+            ping = result.get('ping_ms', -1)
+            status = result.get('status', 'error')
+            if status == 'success':
+                print(f"* Tag: {tag:<30} | Ping: {ping:>4} ms | Status: SUCCESS")
             else:
-                print("\n! TEST FAILED: Xray did not start.")
-    except Exception as e:
-        print(f"\n! TEST FAILED: An error occurred during Xray execution: {e}")
+                print(f"! Tag: {tag:<30} | Ping: ---- ms | Status: FAILED ({status})")
+    else:
+        print("! No results received from the tester for this URI.")
 
     print(f"* Test finished for URI: {uri[:50]}...")
 
 
 def main():
     """
-    Runs a series of tests with a list of different URI types.
+    * Runs a series of tests with different URI types using ConnectionTester.
     """
-    project_root = Path(__file__).parent.parent
-    vendor_dir = project_root / "vendor"
+    project_root = Path(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-    print("--- Running Python-V2Ray Batch URI Tester ---")
-    print(f"Vendor directory set to: {vendor_dir}")
+    # We now pass the vendor directory, not the specific executable path
+    vendor_dir = project_root / "vendor"
+    core_engine_dir = project_root / "core_engine" # NEW: Path to core_engine
+
+    # Ensure binaries are ready (This is usually done by the CLI, but good for standalone examples)
     try:
+        from python_v2ray.downloader import BinaryDownloader
         downloader = BinaryDownloader(project_root)
         downloader.ensure_all()
+        print("* All necessary binaries are ready.")
     except Exception as e:
-        print(f"\n! FATAL: {e}")
+        print(f"\n! FATAL ERROR: Could not ensure binaries: {e}")
         return
 
     # ! =======================================================================
-    # ! === REPLACE THESE WITH A REAL TEST URI                              ===
+    # ! === REPLACE THESE WITH YOUR OWN REAL TEST URIS                      ===
     # ! =======================================================================
     test_uris = [
-        "vless://YOUR_UUID@your.domain.com:443?security=tls&sni=your.domain.com&fp=chrome&type=ws&path=%2F#VLESS-WS-TLS",
-        "vmess://ewogICJ2IjogIjIiLAogICJwcyI6ICJWbWVzcy1URU5UIEtleSIsCiAgImFkZCI6ICJzb21lLmRvbWFpbi5jb20iLAogICJwb3J0IjogIjgwODAiLAogICJpZCI6ICJZV1JzTFRrM1pHRXRaV1UwTnkxa05EVm1MVGhsWm1NdFkyVTVNRFJsWWpkaE5XRmpZdyIsCiAgImFpZCI6ICIwIiwKICAic2N5IjogImF1dG8iLAogICJuZXQiOiAidGNwIiwKICAidHlwZSI6ICJub25lIiwKICAiaG9zdCI6ICIiLAogICJwYXRoIjogIi8iLAogICJ0bHMiOiAiIiwKICAic25pIjogIiIKfQ==",
-        "trojan://YOUR_PASSWORD@your.domain.com:443?sni=your.domain.com#Trojan-Test",
-        "ss://YWVzLTI1Ni1nY206eW91cl9wYXNzd29yZA==@your.domain.com:8443#ShadowSocks-Test"
+        "trojan://02XtoczO7V@5.255.102.41:17590?type=ws&path=%2Fhishhhh123&host=mooshali.arshiacomplus.dpdns.org&security=tls&fp=firefox&alpn=http%2F1.1&sni=mooshali.arshiacomplus.dpdns.org#TR%2Bws%2Btls-xmdgfvsot", # Added Hysteria2 example
+            "trojan://02XtoczO7V@5.255.102.41:17590?type=ws&path=%2Fhishhhh123&host=mooshali.arshiacomplus.dpdns.org&security=tls&fp=firefox&alpn=http%2F1.1&sni=mooshali.arshiacomplus.dpdns.org#TR%2Bws%2Btls-xmdgfvsot" # Added Hysteria2 example
+
     ]
 
-
     for uri in test_uris:
-        if "YOUR_" in uri or "your.domain.com" in uri:
+        if "YOUR_" in uri or "your." in uri: # Check for placeholders
+            print(f"\n! Skipping placeholder URI: {uri[:50]}...")
+            print("! Please replace it with your own real config URI in the 'test_uris' list to test it.")
             continue
-        run_test_with_uri(vendor_dir, uri)
+        # Pass vendor_dir and core_engine_dir
+        run_test_with_uri(str(vendor_dir), str(core_engine_dir), uri)
 
 
 if __name__ == "__main__":

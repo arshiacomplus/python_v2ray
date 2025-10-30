@@ -23,6 +23,7 @@ class ConfigParams:
     address: str
     port: int
     tag: Optional[str] = "proxy"
+    display_tag: Optional[str] = "Untitled"
     # * Common Fields (VLESS/VMess/Trojan)
     id: Optional[str] = ""
     security: Optional[str] = ""
@@ -76,41 +77,45 @@ def _parse_query_params(query: str) -> Dict[str, str]:
     return params
 def parse_uri(config_uri: str) -> Optional[ConfigParams]:
     """
-    * This is the main parsing engine. It delegates the parsing to
-    * protocol-specific helper functions and validates the core components.
+    This is the robust, corrected version of the URI parser.
+    It correctly handles URL-encoded characters in tags without breaking
+    the main configuration part.
     """
     try:
-        uri = urllib.parse.unquote(config_uri).strip()
-        raw_tag = uri.split("#", 1)[1] if len(uri.split("#", 1)) > 1 else "Untitled"
-        tag = re.sub(r'[^a-zA-Z0-9_.-]', '_', raw_tag) or "proxy"
-        protocol = uri.split("://")[0]
-        if "@" not in uri or ":" not in uri.split("@")[-1]:
-            if protocol != 'vmess':
-                print(f"! Invalid URI structure (missing @ or :). Skipping: {uri[:40]}...")
-                return None
+        uri = config_uri.strip()
+        if not uri:
+            return None
+        main_part = uri.split("#", 1)[0]
+        raw_tag_from_uri = uri.split("#", 1)[1] if "#" in uri else "Untitled"
+        decoded_display_tag = urllib.parse.unquote(raw_tag_from_uri) # <--- Tag برای نمایش (بدون پاکسازی)
+        internal_safe_tag = re.sub(r'[^a-zA-Z0-9_.-]', '_', decoded_display_tag) or "proxy"
+        protocol = main_part.split("://")[0]
         parser_map = {
-            "vless": _parse_vless, "mvless": _parse_vless, "vmess": _parse_vmess, "trojan": _parse_trojan,
-            "ss": _parse_shadowsocks, "socks": _parse_socks, "wireguard": _parse_wireguard,
-            "hysteria": _parse_hysteria, "hysteria2": _parse_hysteria, "hy2": _parse_hysteria,
+            "vless": _parse_vless, "mvless": _parse_vless, "vmess": _parse_vmess,
+            "trojan": _parse_trojan, "ss": _parse_shadowsocks, "socks": _parse_socks,
+            "wireguard": _parse_wireguard, "hysteria": _parse_hysteria,
+            "hysteria2": _parse_hysteria, "hy2": _parse_hysteria,
         }
         parser = parser_map.get(protocol)
         if not parser:
-            print(f"note: Unsupported protocol found: {protocol}")
             return None
-        common = {"protocol": protocol, "tag": tag, "address": "", "port": 0}
-        match = re.search(r"@([^:]+):(\d+)", uri.split("?")[0])
+        common = {"protocol": protocol, "tag": internal_safe_tag, "display_tag": decoded_display_tag, "address": "", "port": 0}
+        if "@" not in main_part or ":" not in main_part.split("@")[-1]:
+            if protocol != 'vmess':
+                logging.warning(f"Invalid URI structure (missing @ or :). Skipping: {uri[:50]}...")
+                return None
+        match = re.search(r"@([^:]+):(\d+)", main_part.split("?")[0])
         if match:
             common["address"] = match.group(1)
             common["port"] = int(match.group(2))
-        elif protocol != 'vmess':
-            print(f"! Could not extract host/port from URI. Skipping: {uri[:40]}...")
-            return None
-        params = parser(uri.strip(), common)
+        params = parser(uri, common)
+        if params and not params.display_tag:
+            params.display_tag = decoded_display_tag
         if protocol == "mvless" and params:
             _parse_mvless_extensions(params, uri)
         return params
     except Exception as e:
-        print(f"! CRITICAL ERROR while parsing URI '{config_uri[:30]}...': {e}")
+        logging.error(f"CRITICAL ERROR while parsing URI '{config_uri[:30]}...': {e}", exc_info=True)
         return None
 def _parse_vless(uri: str, common: dict) -> ConfigParams:
     parsed_url = urllib.parse.urlparse(uri)
@@ -144,13 +149,24 @@ def _parse_mvless_extensions(params: ConfigParams, uri: str):
 def _parse_vmess(uri: str, common: dict) -> ConfigParams:
     encoded_part = uri.replace("vmess://", "")
     decoded = json.loads(base64.b64decode(encoded_part + "==").decode("utf-8"))
+    vmess_display_tag = decoded.get("ps", common['display_tag'])
+    vmess_internal_safe_tag = common['tag']
+    if "ps" in decoded:
+        vmess_internal_safe_tag = re.sub(r'[^a-zA-Z0-9_.-]', '_', vmess_display_tag) or "proxy"
     return ConfigParams(
-        protocol="vmess", tag=decoded.get("ps", common['tag']),
-        address=decoded.get("add", ""), port=int(decoded.get("port", 0)),
-        id=decoded.get("id", ""), alter_id=int(decoded.get("aid", 0)),
-        scy=decoded.get("scy", "auto"), network=decoded.get("net", "tcp"),
-        header_type=decoded.get("type", "none"), host=decoded.get("host", ""),
-        path=decoded.get("path", "/"), security="tls" if decoded.get("tls") else "",
+        protocol="vmess",
+        tag=vmess_internal_safe_tag,
+        display_tag=vmess_display_tag,
+        address=decoded.get("add", ""),
+        port=int(decoded.get("port", 0)),
+        id=decoded.get("id", ""),
+        alter_id=int(decoded.get("aid", 0)),
+        scy=decoded.get("scy", "auto"),
+        network=decoded.get("net", "tcp"),
+        header_type=decoded.get("type", "none"),
+        host=decoded.get("host", ""),
+        path=decoded.get("path", "/"),
+        security="tls" if decoded.get("tls") else "",
         sni=decoded.get("sni", ""),
     )
 def _parse_trojan(uri: str, common: dict) -> ConfigParams:
@@ -163,21 +179,53 @@ def _parse_trojan(uri: str, common: dict) -> ConfigParams:
         header_type=params.get("headerType", "none"), host=params.get("host", ""),
         path=params.get("path", "/"),
     )
-def _parse_shadowsocks(uri: str, common: dict) -> ConfigParams:
-    main_part = uri.split("#")[0].replace("ss://", "")
-    if "@" not in main_part:
-        # Legacy format: base64(method:password@server:port)
-        decoded = base64.b64decode(main_part + "==").decode("utf-8")
-        main_part = decoded
-    auth_part, server_part = main_part.split("@")
-    common['address'], port_str = server_part.split(":")
-    common['port'] = int(port_str)
-    try: # SIP002 format: base64(method:password)
-        decoded_auth = base64.b64decode(auth_part + "==").decode("utf-8")
-        method, password = decoded_auth.split(":", 1)
-    except: # Legacy format: method:password
-        method, password = urllib.parse.unquote(auth_part).split(":", 1)
-    return ConfigParams(**common, ss_method=method, password=password)
+def _parse_shadowsocks(uri: str, common: dict) -> Optional[ConfigParams]:
+    """
+    A robust parser for various ShadowSocks URI formats.
+    It gracefully handles malformed or non-standard URIs by returning None.
+    """
+    try:
+        main_part = uri.split("#")[0].replace("ss://", "")
+        if "@" not in main_part:
+            try:
+                missing_padding = len(main_part) % 4
+                if missing_padding:
+                    main_part += '=' * (4 - missing_padding)
+                decoded = base64.b64decode(main_part).decode('utf-8')
+                main_part = decoded
+            except (base64.binascii.Error, UnicodeDecodeError):
+                logging.warning(f"SS URI part is not standard and not valid Base64. Skipping: {uri[:50]}...")
+                return None
+        if "@" not in main_part:
+            logging.warning(f"Malformed SS URI after decoding. Skipping: {uri[:50]}...")
+            return None
+        auth_part, server_part = main_part.split("@", 1)
+        if ":" not in server_part:
+            logging.warning(f"Missing port in SS URI. Skipping: {uri[:50]}...")
+            return None
+        common['address'], port_str = server_part.rsplit(":", 1)
+        common['port'] = int(port_str)
+        method = "chacha20-poly1305"
+        password = ""
+        try:
+            missing_padding = len(auth_part) % 4
+            if missing_padding:
+                auth_part += '=' * (4 - missing_padding)
+            decoded_auth = base64.b64decode(auth_part).decode('utf-8')
+            if ":" in decoded_auth:
+                method, password = decoded_auth.split(":", 1)
+            else:
+                password = decoded_auth
+        except (base64.binascii.Error, UnicodeDecodeError):
+            auth_part_decoded = urllib.parse.unquote(auth_part)
+            if ":" in auth_part_decoded:
+                method, password = auth_part_decoded.split(":", 1)
+            else:
+                password = auth_part_decoded
+        return ConfigParams(**common, ss_method=method, password=password)
+    except Exception as e:
+        logging.error(f"Failed to parse ShadowSocks URI '{uri[:50]}...': {e}. Skipping.")
+        return None
 def _parse_socks(uri: str, common: dict) -> ConfigParams:
     parsed_url = urllib.parse.urlparse(uri)
     return ConfigParams(**common, id=parsed_url.username, password=parsed_url.password)
@@ -261,7 +309,7 @@ class XrayConfigBuilder:
         self.warp_outbound_tag = tag
         logging.info(f"WARP outbound '{tag}' has been configured as the exit proxy.")
         return self
-    def build_outbound_from_params(self, params: ConfigParams, fragment_config: Optional[Dict[str, Any]] = None, **kwargs) -> Dict[str, Any]:
+    def build_outbound_from_params(self, params: ConfigParams, explicit_tag: Optional[str] = None, fragment_config: Optional[Dict[str, Any]] = None, **kwargs) -> Dict[str, Any]:
         """
         * The main engine. Converts ConfigParams into a complete Xray outbound dictionary.
         * Now correctly maps short protocol names to Xray's official protocol names.
@@ -287,8 +335,9 @@ class XrayConfigBuilder:
                 outbound["mux"] = {"enabled": True  if  outbound["mux"].upper() == "ON" else False , "concurrency": params.mux_concurrency}
             except Exception:
                 print("! No mux found in mvless")
+        final_outbound_tag = explicit_tag if explicit_tag is not None else params.tag
         outbound = {
-            "tag": params.tag,
+            "tag": final_outbound_tag,
             "protocol": xray_protocol_name, # ! Use the correct, full protocol name
             "settings": protocol_settings,
             "streamSettings": stream_settings
@@ -407,11 +456,10 @@ class XrayConfigBuilder:
             }
         })
         return self
-def fetch_from_subscription(url: str, timeout: int = 10) -> List[str]:
+def fetch_from_subscription(url: str, timeout: int = 10, max_configs: Optional[int] = None) -> List[str]:
     """
     Fetches configuration URIs from a subscription link.
-    It intelligently handles both Base64 encoded and plain text content.
-    It also handles missing padding for Base64.
+    It can now limit the number of configs returned.
     """
     try:
         logging.info(f"Fetching subscription from: {url}")
@@ -420,51 +468,49 @@ def fetch_from_subscription(url: str, timeout: int = 10) -> List[str]:
         content = response.content
         try:
             missing_padding = len(content) % 4
-            if missing_padding:
-                content += b'=' * (4 - missing_padding)
-            decoded_bytes = base64.b64decode(content)
-            decoded_content = decoded_bytes.decode('utf-8')
-            logging.info("Subscription content successfully decoded as Base64.")
+            if missing_padding: content += b'=' * (4 - missing_padding)
+            decoded_content = base64.b64decode(content).decode('utf-8')
         except (base64.binascii.Error, UnicodeDecodeError):
-            logging.warning("Failed to decode as Base64. Treating content as plain text.")
             decoded_content = content.decode('utf-8')
         uris = [uri.strip() for uri in decoded_content.splitlines() if uri.strip()]
+        if max_configs and max_configs > 0:
+            logging.info(f"Limiting configs to a maximum of {max_configs}.")
+            uris = uris[:max_configs]
         logging.info(f"Successfully processed {len(uris)} configs from subscription.")
         return uris
-    except requests.exceptions.RequestException as e:
-        logging.error(f"Failed to fetch subscription link: {e}")
     except Exception as e:
-        logging.error(f"An unexpected error occurred: {e}")
-    return []
+        logging.error(f"Failed to fetch or process subscription: {e}")
+        return []
 def load_configs(
     source: Union[str, List[str], Path],
-    is_subscription: bool = False
+    is_subscription: bool = False,
+    max_configs: Optional[int] = None
 ) -> List[ConfigParams]:
     """
-    A universal config loader that handles different sources and robustly
-    returns a list of parsed configurations.
+    A universal config loader that now supports limiting the number of configs
+    fetched from a subscription.
     """
     raw_uris: List[str] = []
-    if isinstance(source, str) and source.startswith(('http://', 'https://')):
+    if isinstance(source, str) and source.startswith(('http', 'https')):
         if is_subscription:
-            raw_uris = fetch_from_subscription(source)
+            raw_uris = fetch_from_subscription(source, max_configs=max_configs)
         else:
             raw_uris = [source]
     elif isinstance(source, list):
         raw_uris = source
     elif isinstance(source, Path) and source.is_file():
-        logging.info(f"Loading configs from file: {source}")
         content = source.read_text('utf-8').strip()
-        if is_subscription:
-            raw_uris = fetch_from_subscription(content)
+        if is_subscription or content.startswith(('http', 'https')):
+            raw_uris = fetch_from_subscription(content, max_configs=max_configs)
         else:
             raw_uris = [line.strip() for line in content.splitlines() if line.strip()]
     else:
-        logging.error(f"Unsupported source type or invalid path: {source}")
         return []
-    raw_uris = list(raw_uris)
+    if isinstance(source, Path) and not is_subscription and max_configs and max_configs > 0:
+        logging.info(f"Limiting configs from file to a maximum of {max_configs}.")
+        raw_uris = raw_uris[:max_configs]
     parsed_configs = [p for p in (parse_uri(uri) for uri in raw_uris) if p]
-    return list(parsed_configs)
+    return parsed_configs
 def deduplicate_configs(configs: List[ConfigParams]) -> List[ConfigParams]:
     """
     Removes duplicate configurations from a list based on their core properties,

@@ -1,82 +1,75 @@
 # examples/01_simple_start_stop.py
 
 import time
-from pathlib import Path
+import os
+import sys
 
-from python_v2ray.downloader import BinaryDownloader
-from python_v2ray.config_parser import XrayConfigBuilder, parse_uri
+# * This is a clever way to make the script find our library
+# * without having to install it first.
+# * It adds the parent directory (the project root) to Python's path.
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
 from python_v2ray.core import XrayCore
-
+from python_v2ray.config_parser import XrayConfigBuilder
 def main():
+    """
+    * A simple demonstration of starting and stopping the Xray core using the new architecture.
+    * It dynamically builds a minimal Xray configuration (a SOCKS inbound and a direct outbound).
+    """
+    # note: Define paths relative to the project root.
+    project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 
-    print("--- Python-V2Ray Simple Start/Stop Example ---")
+    # vendor_path is the directory where xray.exe (or xray_linux/macos) resides.
+    # It's now passed to XrayCore, which will find the executable within this directory.
+    vendor_path = os.path.join(project_root, "vendor")
 
-
-    project_root = Path(__file__).parent.parent
-    vendor_dir = project_root / "vendor"
-
-    print(f"Project root detected at: {project_root}")
-    print(f"Vendor directory set to: {vendor_dir}")
-
-
-    try:
-        downloader = BinaryDownloader(project_root)
-        downloader.ensure_all()
-    except Exception as e:
-        print(f"\n! FATAL: {e}")
-        return
-
-
-    sample_vless_uri = "trojan://2ee85121-31de-4581-a492-eb00f606e392@198.46.152.83:443?mux=&security=tls&headerType=none&type=tcp&muxConcurrency=-1&sni=sj3.freeguard.org#trojan:4349S"
-
-    params = parse_uri(sample_vless_uri)
-    if not params:
-        print("! Failed to parse the sample URI. Exiting.")
-        return
-
+    # 1. Create an Xray configuration builder instance.
+    # The XrayCore now expects an XrayConfigBuilder instance, not a direct config file path.
+    print("* Creating a minimal Xray configuration dynamically...")
     builder = XrayConfigBuilder()
 
-    local_socks_port = 10808
+    # For this simple start/stop demo, we'll add a basic SOCKS inbound
+    # and a freedom outbound to make the config valid and functional.
+    # This shows how the builder is used to create the config.
     builder.add_inbound({
-        "port": local_socks_port,
+        "tag": "local-socks",
+        "port": 10808,
         "listen": "127.0.0.1",
         "protocol": "socks",
-        "settings": {
-            "auth": "noauth",
-            "udp": True,
-            "ip": "127.0.0.1"
-        },
-        "tag": "socks_in"
+        "settings": {"auth": "noauth", "udp": True}
     })
+    builder.add_outbound({"protocol": "freedom", "tag": "direct"}) # Xray typically requires at least one outbound
 
-    outbound_config = builder.build_outbound_from_params(params)
-    builder.add_outbound(outbound_config)
+    print("\n* Final JSON config generated (minimal):")
+    print("="*60)
+    print(builder.to_json())
+    print("="*60)
 
-    builder.config["routing"]["rules"].append({
-        "type": "field",
-        "inboundTag": ["socks_in"],
-        "outboundTag": outbound_config["tag"]
-    })
-
-    print(f"* Configuration created. SOCKS proxy will be available at 127.0.0.1:{local_socks_port}")
-
+    print("\n* Attempting to start Xray core...")
     try:
-
-        with XrayCore(vendor_dir=str(vendor_dir), config_builder=builder, debug_mode=True) as xray_process:
-            if xray_process.is_running():
-                print(f"* Xray core is running with PID: {xray_process.process.pid}")
-                print("* The process will run for 15 seconds before shutting down.")
-                print("* You can now configure an application (e.g., a web browser) to use the SOCKS proxy.")
-                time.sleep(15)
+        # Create an instance of our core controller.
+        # XrayCore now takes `vendor_path` and a `config_builder` instance.
+        # The `executable_path` and `config_path` arguments are no longer used here.
+        with XrayCore(vendor_path=vendor_path, config_builder=builder, debug_mode=False) as xray:
+            if xray.is_running():
+                print("\n* SUCCESS! Xray is running with the minimal config.")
+                print("* A local SOCKS proxy is available on 127.0.0.1:10808 (if you added the inbound).")
+                print("* Waiting for 10 seconds before stopping...")
+                time.sleep(10)
             else:
-                print("! Failed to start the Xray core process.")
+                print("\n! Xray failed to start.")
+                print("! Please check the 'vendor' path, executable permissions, or the dynamically generated config.")
+                return
 
-    except FileNotFoundError:
-        print("! Error: Could not find the Xray executable. Please check the vendor path.")
+        print("\n* Demo finished.")
+
+    except FileNotFoundError as e:
+        print(f"\n! ERROR: A required file was not found.")
+        print(f"! {e}")
+        print("! Please make sure you have downloaded the Xray core executable into the 'vendor' folder.")
     except Exception as e:
-        print(f"! An unexpected error occurred: {e}")
+        print(f"\n! An unexpected error occurred: {e}")
 
-    print("--- Example finished ---")
 
 if __name__ == "__main__":
     main()
