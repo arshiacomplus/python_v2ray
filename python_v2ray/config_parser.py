@@ -87,32 +87,36 @@ def parse_uri(config_uri: str) -> Optional[ConfigParams]:
             return None
         main_part = uri.split("#", 1)[0]
         raw_tag_from_uri = uri.split("#", 1)[1] if "#" in uri else "Untitled"
-        decoded_display_tag = urllib.parse.unquote(raw_tag_from_uri) # <--- Tag برای نمایش (بدون پاکسازی)
+        decoded_display_tag = urllib.parse.unquote(raw_tag_from_uri)
         internal_safe_tag = re.sub(r'[^a-zA-Z0-9_.-]', '_', decoded_display_tag) or "proxy"
         protocol = main_part.split("://")[0]
+
+        if "@" not in main_part and protocol not in ["vmess", "socks", "ss"]:
+            logging.warning(f"Invalid URI structure (missing @). Skipping: {uri[:50]}...")
+            return None
+
         parser_map = {
-            "vless": _parse_vless, "mvless": _parse_vless, "vmess": _parse_vmess,
-            "trojan": _parse_trojan, "ss": _parse_shadowsocks, "socks": _parse_socks,
-            "wireguard": _parse_wireguard, "hysteria": _parse_hysteria,
-            "hysteria2": _parse_hysteria, "hy2": _parse_hysteria,
+            "vless": _parse_vless, "vmess": _parse_vmess, "trojan": _parse_trojan,
+            "ss": _parse_shadowsocks, "socks": _parse_socks, "wireguard": _parse_wireguard,
+            "hysteria": _parse_hysteria, "hysteria2": _parse_hysteria, "hy2": _parse_hysteria,
         }
         parser = parser_map.get(protocol)
         if not parser:
             return None
+
         common = {"protocol": protocol, "tag": internal_safe_tag, "display_tag": decoded_display_tag, "address": "", "port": 0}
-        if "@" not in main_part or ":" not in main_part.split("@")[-1]:
-            if protocol != 'vmess':
-                logging.warning(f"Invalid URI structure (missing @ or :). Skipping: {uri[:50]}...")
-                return None
-        match = re.search(r"@([^:]+):(\d+)", main_part.split("?")[0])
-        if match:
-            common["address"] = match.group(1)
-            common["port"] = int(match.group(2))
+
+
+        host_port_part = main_part.split("://", 1)[1].split("@")[-1].split("?")[0]
+        if ":" in host_port_part:
+            address, port_str = host_port_part.rsplit(":", 1)
+            if address: common["address"] = address
+            if port_str.isdigit(): common["port"] = int(port_str)
+
         params = parser(uri, common)
         if params and not params.display_tag:
             params.display_tag = decoded_display_tag
-        if protocol == "mvless" and params:
-            _parse_mvless_extensions(params, uri)
+
         return params
     except Exception as e:
         logging.error(f"CRITICAL ERROR while parsing URI '{config_uri[:30]}...': {e}", exc_info=True)
@@ -228,6 +232,11 @@ def _parse_shadowsocks(uri: str, common: dict) -> Optional[ConfigParams]:
         return None
 def _parse_socks(uri: str, common: dict) -> ConfigParams:
     parsed_url = urllib.parse.urlparse(uri)
+    if not common.get('address'):
+        host_port = parsed_url.netloc.split('@')[-1]
+        if ':' in host_port:
+            common['address'], common['port'] = host_port.split(':')
+            common['port'] = int(common['port'])
     return ConfigParams(**common, id=parsed_url.username, password=parsed_url.password)
 def _parse_wireguard(uri: str, common: dict) -> ConfigParams:
     try:
@@ -237,7 +246,6 @@ def _parse_wireguard(uri: str, common: dict) -> ConfigParams:
         params = _parse_query_params(query_string)
         wg_address_raw = params.get("address", "172.16.0.2/32")
         wg_address_clean = wg_address_raw.replace('+', ',')
-        # ---------------------
         return ConfigParams(
             **common,
             wg_secret_key=secret_key,
@@ -376,6 +384,12 @@ class XrayConfigBuilder:
             "quic": {"quicSettings": {"security": params.host, "key": params.path, "header": header_config}},
             "grpc": {"grpcSettings": {"serviceName": params.path, "multiMode": (params.mode == "multi")}},
         }
+        if params.network == "grpc":
+            if params.path:
+                network_map["grpc"] = {"grpcSettings": {"serviceName": params.path, "multiMode": (params.mode == "multi")}}
+            else:
+                logging.warning(f"gRPC config '{params.tag}' is missing serviceName (path). This will cause an error in Xray.")
+
         stream_settings.update(network_map.get(params.network, {}))
         if params.protocol == "mvless" and params.fragment_enabled:
             stream_settings["fragment"] = {
@@ -421,6 +435,11 @@ class XrayConfigBuilder:
         elif protocol == "wireguard":
             reserved = [int(i.strip()) for i in params.wg_reserved.split(',')] if params.wg_reserved else []
             return {"secretKey": params.wg_secret_key, "address": params.wg_address.split(','), "peers": [{"publicKey": params.pbk, "endpoint": f"{params.address}:{params.port}"}], "mtu": params.wg_mtu, "reserved": reserved}
+        elif protocol == "socks":
+            server = {"address": params.address, "port": params.port, "level": level}
+            if params.id:
+                server["users"] = [{"user": params.id, "pass": params.password or ""}]
+            return {"servers": [server]}
         elif protocol in ["hysteria", "hysteria2"]:
             # note: Creates a SOCKS outbound to point to an external Hysteria client
             return {"servers": [{"address": "127.0.0.1", "port": params.port}]} # Port should be local port of Hy2 client
