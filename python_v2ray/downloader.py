@@ -8,6 +8,7 @@ XRAY_REPO = "GFW-knocker/Xray-core"
 OWN_REPO = "arshiacomplus/python_v2ray"
 HYSTERIA_REPO = "apernet/hysteria"
 
+
 class BinaryDownloader:
     def __init__(self, project_root: Path):
         self.project_root = project_root
@@ -17,15 +18,20 @@ class BinaryDownloader:
         self.arch = self._get_arch_name()
 
     def _get_os_name(self) -> str:
-        if sys.platform == "win32": return "windows"
-        if sys.platform == "darwin": return "darwin"
+        if sys.platform == "win32":
+            return "windows"
+        if sys.platform == "darwin":
+            return "darwin"
         return "linux"
 
     def _get_arch_name(self) -> str:
         machine = platform.machine().lower()
-        if "amd64" in machine or "x86_64" in machine: return "amd64"
-        if "arm64" in machine or "aarch64" in machine: return "arm64"
-        if "386" in machine or "x86" in machine: return "386"
+        if "amd64" in machine or "x86_64" in machine:
+            return "amd64"
+        if "arm64" in machine or "aarch64" in machine:
+            return "arm64"
+        if "386" in machine or "x86" in machine:
+            return "386"
         return "unsupported"
 
     def _get_asset_url(self, assets: list, name_prefix: str) -> Optional[str]:
@@ -37,7 +43,9 @@ class BinaryDownloader:
                 asset_name += ".exe"
         elif name_prefix == "Xray":
             arch_name = "64" if self.arch == "amd64" else self.arch
-            os_name = "macos" if self.os_name == "darwin" else self.os_name # Xray uses macos
+            os_name = (
+                "macos" if self.os_name == "darwin" else self.os_name
+            )  # Xray uses macos
             asset_name = f"{name_prefix}-{os_name}-{arch_name}.zip"
         else:
             arch_name = "64" if self.arch == "amd64" else self.arch
@@ -46,8 +54,8 @@ class BinaryDownloader:
 
         print(f"note: Searching for asset: {asset_name}")
         for asset in assets:
-            if asset['name'].lower() == asset_name.lower():
-                return asset['browser_download_url']
+            if asset["name"].lower() == asset_name.lower():
+                return asset["browser_download_url"]
         return None
 
     def ensure_binary(self, name: str, target_dir: Path, repo: str) -> bool:
@@ -61,7 +69,7 @@ class BinaryDownloader:
         print(f"! Binary '{exe_name}' not found. Downloading from '{repo}'...")
         try:
             if name == "hysteria":
-                release_url = f"https://api.github.com/repos/{repo}/releases/tags/app%2Fv2.6.2" # ! Hardcoded to a specific stable version
+                release_url = f"https://api.github.com/repos/{repo}/releases/tags/app%2Fv2.6.2"  # ! Hardcoded to a specific stable version
             else:
                 release_url = f"https://api.github.com/repos/{repo}/releases/latest"
 
@@ -80,7 +88,7 @@ class BinaryDownloader:
             asset_response = requests.get(download_url, timeout=120, stream=True)
             asset_response.raise_for_status()
 
-            if not download_url.endswith('.zip'):
+            if not download_url.endswith(".zip"):
                 with open(target_file, "wb") as f:
                     f.write(asset_response.content)
             else:
@@ -89,11 +97,14 @@ class BinaryDownloader:
                         if Path(member_name).name.lower() == exe_name.lower():
                             source = z.open(member_name)
                             target = open(target_file, "wb")
-                            with source, target: target.write(source.read())
+                            with source, target:
+                                target.write(source.read())
 
                             for dat_file in ["geoip.dat", "geosite.dat"]:
                                 if dat_file in z.namelist():
-                                    with z.open(dat_file) as source_dat, open(target_dir / dat_file, "wb") as target_dat:
+                                    with z.open(dat_file) as source_dat, open(
+                                        target_dir / dat_file, "wb"
+                                    ) as target_dat:
                                         target_dat.write(source_dat.read())
 
             print(f"* Successfully downloaded '{exe_name}'.")

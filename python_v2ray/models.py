@@ -5,18 +5,22 @@ from typing import Optional, List, Dict, Any
 # note: We'll use dataclasses to create structured, type-hinted models.
 # note: This makes the code much cleaner and easier to work with.
 
+
 @dataclass
 class StreamSettings:
-    """ * Models the streamSettings object for an outbound. """
+    """* Models the streamSettings object for an outbound."""
+
     network: Optional[str] = "tcp"
     security: Optional[str] = ""
     # todo: Add specific settings for wsSettings, grpcSettings, etc. as needed.
     # For now, we'll use a flexible dictionary.
     extra_settings: Dict[str, Any] = field(default_factory=dict)
 
+
 @dataclass
 class Outbound:
-    """ * Represents a single outbound configuration. """
+    """* Represents a single outbound configuration."""
+
     tag: str
     protocol: str
     settings: Dict[str, Any]
@@ -24,7 +28,7 @@ class Outbound:
     mux: Optional[Dict[str, Any]] = None
 
     def to_dict(self) -> Dict[str, Any]:
-        """ * Converts the dataclass to a dictionary ready for JSON. """
+        """* Converts the dataclass to a dictionary ready for JSON."""
         data = {
             "tag": self.tag,
             "protocol": self.protocol,

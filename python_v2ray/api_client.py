@@ -8,11 +8,13 @@ from typing import Optional, Dict
 from .protos.app.stats.command import command_pb2
 from .protos.app.stats.command import command_pb2_grpc
 
+
 class XrayApiClient:
     """
     * A gRPC client for communicating with the Xray-core's built-in API.
     * This class handles the low-level details of making RPC calls.
     """
+
     def __init__(self, api_address: str):
         """
         Args:
@@ -36,13 +38,21 @@ class XrayApiClient:
             self._connect()
 
             # ! We need two separate requests: one for uplink and one for downlink.
-            up_request = command_pb2.GetStatsRequest(name=f"outbound>>>{tag}>>>traffic>>>uplink", reset=reset)
+            up_request = command_pb2.GetStatsRequest(
+                name=f"outbound>>>{tag}>>>traffic>>>uplink", reset=reset
+            )
             up_response = self._stub.GetStats(up_request)
-            uplink_value = up_response.stat.value if up_response and up_response.stat else 0
+            uplink_value = (
+                up_response.stat.value if up_response and up_response.stat else 0
+            )
 
-            down_request = command_pb2.GetStatsRequest(name=f"outbound>>>{tag}>>>traffic>>>downlink", reset=reset)
+            down_request = command_pb2.GetStatsRequest(
+                name=f"outbound>>>{tag}>>>traffic>>>downlink", reset=reset
+            )
             down_response = self._stub.GetStats(down_request)
-            downlink_value = down_response.stat.value if down_response and down_response.stat else 0
+            downlink_value = (
+                down_response.stat.value if down_response and down_response.stat else 0
+            )
 
             return {"uplink": uplink_value, "downlink": downlink_value}
 
@@ -50,6 +60,9 @@ class XrayApiClient:
             # * This error is now expected if there's no traffic yet.
             # * We will handle it gracefully in the example script.
             if "not found" in e.details():
-                return {"uplink": 0, "downlink": 0} # Return 0 if the stat entry doesn't exist yet
+                return {
+                    "uplink": 0,
+                    "downlink": 0,
+                }  # Return 0 if the stat entry doesn't exist yet
             print(f"! gRPC Error while getting stats for tag '{tag}': {e.details()}")
             return None

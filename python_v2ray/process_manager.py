@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import List, Optional
 import logging
 
+
 class BaseProcessManager(abc.ABC):
     """
     An abstract base class for managing external command-line processes.
@@ -14,6 +15,7 @@ class BaseProcessManager(abc.ABC):
     It handles the common logic for starting, stopping, and cleaning up processes
     and their configuration files, designed to be used as a context manager.
     """
+
     def __init__(self, vendor_path: str):
         self.vendor_path = Path(vendor_path)
         self.executable_path = self.vendor_path / self._get_executable_name()
@@ -46,7 +48,9 @@ class BaseProcessManager(abc.ABC):
                 logging.debug(f"Config file deleted: {self._config_file_path}")
                 self._config_file_path = None
             except OSError as e:
-                logging.error(f"Error removing config file {self._config_file_path}: {e}")
+                logging.error(
+                    f"Error removing config file {self._config_file_path}: {e}"
+                )
 
     def start(self) -> None:
         if self.is_running():
@@ -56,20 +60,28 @@ class BaseProcessManager(abc.ABC):
         self._create_config()
         command = self._get_start_command()
 
-        logging.info(f"Starting {self.__class__.__name__} with command: {' '.join(command)}")
+        logging.info(
+            f"Starting {self.__class__.__name__} with command: {' '.join(command)}"
+        )
         try:
-            self.process = subprocess.Popen(command, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
-            logging.info(f"{self.__class__.__name__} started successfully with PID: {self.process.pid}")
+            self.process = subprocess.Popen(
+                command, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE
+            )
+            logging.info(
+                f"{self.__class__.__name__} started successfully with PID: {self.process.pid}"
+            )
         except Exception as e:
             logging.error(f"Failed to start {self.__class__.__name__}: {e}")
             self.process = None
-            self._cleanup_config() # Clean up if start fails
+            self._cleanup_config()  # Clean up if start fails
 
     def stop(self) -> None:
         if not self.is_running():
             return
 
-        logging.info(f"Stopping {self.__class__.__name__} with PID: {self.process.pid}...")
+        logging.info(
+            f"Stopping {self.__class__.__name__} with PID: {self.process.pid}..."
+        )
         try:
             self.process.terminate()
             self.process.wait(timeout=5)
