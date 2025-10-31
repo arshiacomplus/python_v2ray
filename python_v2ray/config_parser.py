@@ -66,31 +66,81 @@ class ConfigParams:
 
 def _parse_query_params(query: str) -> Dict[str, str]:
     """
-    A robust query parameter parser that correctly handles URL-encoded values
-    without converting '+' to a space, which is critical for Base64 keys.
+    A robust query parameter parser that correctly handles URL-encoded values.
     """
     params = {}
     if not query:
         return params
-    for pair in query.split("&"):
-        if "=" in pair:
-            key, value = pair.split("=", 1)
-            params[urllib.parse.unquote(key)] = urllib.parse.unquote(value)
+    parsed_qs = urllib.parse.parse_qs(query)
+    for key, values in parsed_qs.items():
+        if values:
+            params[key] = values[-1]
     return params
 
 
 def parse_uri(config_uri: str) -> Optional[ConfigParams]:
+    """
+    A heavily refactored and robust URI parser that handles non-standard formats,
+    including IPv6 and URL-encoded characters in unexpected places.
+    """
     try:
         uri = config_uri.strip()
         if not uri:
             return None
-        main_part = uri.split("#", 1)[0]
-        raw_tag_from_uri = uri.split("#", 1)[1] if "#" in uri else "Untitled"
-        decoded_display_tag = urllib.parse.unquote(raw_tag_from_uri)
-        internal_safe_tag = (
-            re.sub(r"[^a-zA-Z0-9_.-]", "_", decoded_display_tag) or "proxy"
-        )
-        protocol = main_part.split("://")[0]
+
+        protocol = uri.split("://")[0]
+        if protocol not in [
+            "vless",
+            "mvless",
+            "vmess",
+            "trojan",
+            "ss",
+            "socks",
+            "wireguard",
+            "hysteria",
+            "hysteria2",
+            "hy2",
+        ]:
+            return None
+
+        if protocol != "vmess":
+            try:
+                uri = urllib.parse.unquote(uri)
+            except Exception:
+                pass
+
+            parsed_url = urllib.parse.urlparse(uri, scheme=protocol)
+
+            decoded_display_tag = (
+                urllib.parse.unquote(parsed_url.fragment)
+                if parsed_url.fragment
+                else "Untitled"
+            )
+            internal_safe_tag = (
+                re.sub(r"[^a-zA-Z0-9_.-]", "_", decoded_display_tag) or "proxy"
+            )
+
+            common = {
+                "protocol": protocol,
+                "tag": internal_safe_tag,
+                "display_tag": decoded_display_tag,
+                "address": parsed_url.hostname or "",
+                "port": parsed_url.port or 0,
+            }
+        else:
+            main_part = uri.split("#", 1)[0]
+            raw_tag_from_uri = uri.split("#", 1)[1] if "#" in uri else "Untitled"
+            decoded_display_tag = urllib.parse.unquote(raw_tag_from_uri)
+            internal_safe_tag = (
+                re.sub(r"[^a-zA-Z0-9_.-]", "_", decoded_display_tag) or "proxy"
+            )
+            common = {
+                "protocol": "vmess",
+                "tag": internal_safe_tag,
+                "display_tag": decoded_display_tag,
+            }
+            parsed_url = None
+
         parser_map = {
             "vless": _parse_vless,
             "mvless": _parse_vless,
@@ -106,23 +156,12 @@ def parse_uri(config_uri: str) -> Optional[ConfigParams]:
         parser = parser_map.get(protocol)
         if not parser:
             return None
-        common = {
-            "protocol": protocol,
-            "tag": internal_safe_tag,
-            "display_tag": decoded_display_tag,
-            "address": "",
-            "port": 0,
-        }
 
-        at_match = re.search(r"@([^:]+):(\d+)", main_part)
-        if at_match:
-            common["address"] = at_match.group(1)
-            common["port"] = int(at_match.group(2))
-
-        params = parser(uri, common)
+        params = parser(uri, common, parsed_url)
 
         if not params:
             return None
+
         if not params.address or not params.port or params.port <= 0:
             logging.warning(
                 f"Parsed config '{params.display_tag}' is missing a valid address or port. Skipping."
@@ -131,17 +170,23 @@ def parse_uri(config_uri: str) -> Optional[ConfigParams]:
 
         if protocol == "mvless":
             _parse_mvless_extensions(params, uri)
+
         return params
+
     except Exception as e:
         logging.error(
-            f"CRITICAL ERROR while parsing URI '{config_uri[:30]}...': {e}",
+            f"CRITICAL ERROR while parsing URI '{config_uri[:50]}...': {e}",
             exc_info=False,
         )
         return None
 
 
-def _parse_vless(uri: str, common: dict) -> Optional[ConfigParams]:
-    parsed_url = urllib.parse.urlparse(uri)
+# Note: All parser functions now accept an optional `parsed_url` object
+def _parse_vless(
+    uri: str, common: dict, parsed_url: Optional[urllib.parse.ParseResult]
+) -> Optional[ConfigParams]:
+    if not parsed_url:
+        return None
     params = _parse_query_params(parsed_url.query)
 
     network_type = params.get("type", "tcp")
@@ -149,40 +194,39 @@ def _parse_vless(uri: str, common: dict) -> Optional[ConfigParams]:
     host = params.get("host", "")
     sni = params.get("sni", host)
 
-    if network_type == "grpc" and (not path or path == "/"):
-        path = sni or host
-        if not path or path == "/":
+    if network_type == "grpc" and not path:
+        path = params.get("serviceName", sni or host)
+        if not path:
             logging.warning(
-                f"gRPC config '{common['display_tag']}' is missing a valid serviceName (path) and has no fallback SNI/Host. Skipping."
+                f"gRPC config '{common['display_tag']}' missing serviceName/path and has no fallback SNI/Host. Skipping."
             )
             return None
-        logging.info(
-            f"gRPC config '{common['display_tag']}' missing serviceName. Using fallback: '{path}'"
-        )
 
     return ConfigParams(
         **common,
-        id=parsed_url.username,
-        security=params.get("security", ""),
+        id=parsed_url.username or "",
+        security=params.get("security", "none"),
         network=network_type,
         header_type=params.get("headerType", "none"),
-        host=params.get("host", ""),
+        host=host,
         path=path,
-        sni=params.get("sni", params.get("host", "")),
+        sni=sni,
         fp=params.get("fp", ""),
         alpn=params.get("alpn", ""),
         flow=params.get("flow", ""),
         encryption=params.get("encryption", "none"),
     )
+
+
 def _parse_mvless_extensions(params: ConfigParams, uri: str):
     """Parses Mux and Fragment parameters specific to the Mvless protocol and modifies the ConfigParams object."""
     try:
-        query_params = urllib.parse.parse_qs(urllib.parse.urlparse(uri).query)
-        if "mux" in query_params and query_params["mux"][0].upper() == "ON":
+        query_params = _parse_query_params(urllib.parse.urlparse(uri).query)
+        if "mux" in query_params and query_params["mux"].upper() == "ON":
             params.mux_enabled = True
             if "muxConcurrency" in query_params:
                 try:
-                    params.mux_concurrency = int(query_params["muxConcurrency"][0])
+                    params.mux_concurrency = int(query_params["muxConcurrency"])
                 except (ValueError, IndexError):
                     pass
         if (
@@ -191,45 +235,39 @@ def _parse_mvless_extensions(params: ConfigParams, uri: str):
             and "interval" in query_params
         ):
             params.fragment_enabled = True
-            params.fragment_packets = query_params["packets"][0]
-            params.fragment_length = query_params["length"][0]
-            params.fragment_interval = query_params["interval"][0]
+            params.fragment_packets = query_params["packets"]
+            params.fragment_length = query_params["length"]
+            params.fragment_interval = query_params["interval"]
     except Exception as e:
-        print(f"! Error parsing mvless extensions: {e}")
+        logging.warning(f"! Error parsing mvless extensions: {e}")
 
 
-def _parse_vmess(uri: str, common: dict) -> Optional[ConfigParams]:
+def _parse_vmess(
+    uri: str, common: dict, parsed_url: Optional[urllib.parse.ParseResult]
+) -> Optional[ConfigParams]:
     try:
-        encoded_part = uri.replace("vmess://", "")
+        encoded_part = uri.replace("vmess://", "").split("#")[0]
         decoded = json.loads(base64.b64decode(encoded_part + "==").decode("utf-8"))
+
+        display_tag = decoded.get("ps", common["display_tag"])
+        common["display_tag"] = display_tag
+        common["tag"] = re.sub(r"[^a-zA-Z0-9_.-]", "_", display_tag) or "proxy"
 
         network_type = decoded.get("net", "tcp")
         path = decoded.get("path", "")
         host = decoded.get("host", "")
-        sni = decoded.get("sni", "")
-        display_tag = decoded.get("ps", common["display_tag"])
+        sni = decoded.get("sni", host)
 
-        if network_type == "grpc" and (not path or path == "/"):
-            path = sni or host
-            if not path or path == "/":
+        if network_type == "grpc" and not path:
+            path = decoded.get("serviceName", sni or host)
+            if not path:
                 logging.warning(
-                    f"gRPC config '{display_tag}' is missing a valid serviceName (path) and has no fallback SNI/Host. Skipping."
+                    f"gRPC config '{display_tag}' missing serviceName/path and has no fallback SNI/Host. Skipping."
                 )
                 return None
-            logging.info(
-                f"gRPC config '{display_tag}' missing serviceName. Using fallback: '{path}'"
-            )
-
-        vmess_internal_safe_tag = common["tag"]
-        if "ps" in decoded:
-            vmess_internal_safe_tag = (
-                re.sub(r"[^a-zA-Z0-9_.-]", "_", display_tag) or "proxy"
-            )
 
         return ConfigParams(
-            protocol="vmess",
-            tag=vmess_internal_safe_tag,
-            display_tag=display_tag,
+            **common,
             address=decoded.get("add", ""),
             port=int(decoded.get("port", 0)),
             id=decoded.get("id", ""),
@@ -237,17 +275,21 @@ def _parse_vmess(uri: str, common: dict) -> Optional[ConfigParams]:
             scy=decoded.get("scy", "auto"),
             network=network_type,
             header_type=decoded.get("type", "none"),
-            host=decoded.get("host", ""),
+            host=host,
             path=path,
-            security="tls" if decoded.get("tls") else "",
-            sni=decoded.get("sni", ""),
+            security="tls" if decoded.get("tls") else "none",
+            sni=sni,
         )
     except Exception as e:
-        logging.error(f"Failed to parse VMess URI '{uri[:30]}...': {e}. Skipping.")
+        logging.error(f"Failed to parse VMess URI '{uri[:50]}...': {e}. Skipping.")
         return None
 
-def _parse_trojan(uri: str, common: dict) -> ConfigParams:
-    parsed_url = urllib.parse.urlparse(uri)
+
+def _parse_trojan(
+    uri: str, common: dict, parsed_url: Optional[urllib.parse.ParseResult]
+) -> Optional[ConfigParams]:
+    if not parsed_url:
+        return None
     params = _parse_query_params(parsed_url.query)
 
     network_type = params.get("type", "tcp")
@@ -256,20 +298,17 @@ def _parse_trojan(uri: str, common: dict) -> ConfigParams:
     sni = params.get("sni", common.get("address", ""))
 
     if network_type == "grpc" and (not path or path == "/"):
-        path = sni or host
-        if not path or path == "/":
+        path = params.get("serviceName", sni or host)
+        if not path:
             logging.warning(
-                f"gRPC config '{common['display_tag']}' is missing a valid serviceName (path) and has no fallback SNI/Host. Skipping."
+                f"gRPC config '{common['display_tag']}' missing serviceName/path and has no fallback. Skipping."
             )
             return None
-        logging.info(
-            f"gRPC config '{common['display_tag']}' missing serviceName. Using fallback: '{path}'"
-        )
 
     return ConfigParams(
         **common,
-        password=parsed_url.username,
-        sni=params.get("sni", common["address"]),
+        password=parsed_url.username or "",
+        sni=sni,
         network=network_type,
         security=params.get("security", "tls"),
         fp=params.get("fp", ""),
@@ -278,90 +317,73 @@ def _parse_trojan(uri: str, common: dict) -> ConfigParams:
         path=path,
     )
 
-def _parse_shadowsocks(uri: str, common: dict) -> Optional[ConfigParams]:
-    try:
-        main_part = uri.split("#")[0].replace("ss://", "")
-        main_part_no_query = main_part.split("?")[0]
 
-        if "@" not in main_part_no_query:
-            try:
-                decoded = base64.b64decode(main_part_no_query.encode("ascii")).decode(
-                    "utf-8"
-                )
-                main_part_no_query = decoded
-            except (base64.binascii.Error, UnicodeDecodeError):
-                logging.warning(
-                    f"SS URI part is not standard and not valid Base64. Skipping: {uri[:50]}..."
-                )
-                return None
-
-        if "@" not in main_part_no_query:
-            logging.warning(f"Malformed SS URI after decoding. Skipping: {uri[:50]}...")
-            return None
-
-        auth_part, server_part = main_part_no_query.split("@", 1)
-
-        if ":" not in server_part:
-            logging.warning(f"Missing port in SS URI. Skipping: {uri[:50]}...")
-            return None
-
-        common["address"], port_str = server_part.rsplit(":", 1)
-        common["port"] = int(port_str)
-
-        method, password = "chacha20-poly1305", ""
-        auth_part_decoded = urllib.parse.unquote(auth_part)
-        if ":" in auth_part_decoded:
-            method, password = auth_part_decoded.split(":", 1)
-        else:
-            password = auth_part_decoded
-
-        return ConfigParams(**common, ss_method=method, password=password)
-    except Exception as e:
-        logging.error(
-            f"Failed to parse ShadowSocks URI '{uri[:50]}...': {e}. Skipping."
-        )
+def _parse_shadowsocks(
+    uri: str, common: dict, parsed_url: Optional[urllib.parse.ParseResult]
+) -> Optional[ConfigParams]:
+    if not parsed_url:
         return None
 
+    auth_part = parsed_url.username or ""
+    if ":" not in auth_part and parsed_url.password is None:
+        try:
+            decoded_auth = base64.b64decode(
+                str(parsed_url.netloc.split("@")[0]) + "=="
+            ).decode("utf-8")
+            if ":" in decoded_auth:
+                method, password = decoded_auth.split(":", 1)
+                return ConfigParams(**common, ss_method=method, password=password)
+        except Exception:
+            pass
 
-def _parse_socks(uri: str, common: dict) -> ConfigParams:
-    parsed_url = urllib.parse.urlparse(uri)
-    if not common.get("address"):
-        host_port = parsed_url.netloc.split("@")[-1]
-        if ":" in host_port:
-            common["address"], common["port"] = host_port.split(":")
-            common["port"] = int(common["port"])
+    if ":" in auth_part:
+        method, password = auth_part.split(":", 1)
+        return ConfigParams(**common, ss_method=method, password=password)
+    else:
+        params = _parse_query_params(parsed_url.query)
+        method = params.get("method", "chacha20-poly1305")
+        return ConfigParams(**common, ss_method=method, password=auth_part)
+
+
+def _parse_socks(
+    uri: str, common: dict, parsed_url: Optional[urllib.parse.ParseResult]
+) -> Optional[ConfigParams]:
+    if not parsed_url:
+        return None
     return ConfigParams(**common, id=parsed_url.username, password=parsed_url.password)
 
 
-def _parse_wireguard(uri: str, common: dict) -> ConfigParams:
-    try:
-        main_part = uri.split("://", 1)[1]
-        secret_key, _ = main_part.split("@", 1)
-        query_string = uri.split("?", 1)[1].split("#", 1)[0] if "?" in uri else ""
-        params = _parse_query_params(query_string)
-        wg_address_raw = params.get("address", "172.16.0.2/32")
-        wg_address_clean = wg_address_raw.replace("+", ",")
-        return ConfigParams(
-            **common,
-            wg_secret_key=secret_key,
-            wg_address=wg_address_clean,
-            pbk=params.get("publicKey", ""),
-            wg_reserved=params.get("reserved", ""),
-            wg_mtu=int(params.get("mtu", 1420)),
-        )
-    except Exception as e:
-        logging.error(f"Error manually parsing WireGuard URI: {e}")
+def _parse_wireguard(
+    uri: str, common: dict, parsed_url: Optional[urllib.parse.ParseResult]
+) -> Optional[ConfigParams]:
+    if not parsed_url:
         return None
+    params = _parse_query_params(parsed_url.query)
 
+    wg_address_raw = params.get("address", "172.16.0.2/32")
+    wg_address_clean = [addr.strip() for addr in wg_address_raw.split(",")]
 
-def _parse_hysteria(uri: str, common: dict) -> ConfigParams:
-    params = _parse_query_params(urllib.parse.urlparse(uri).query)
-    password = urllib.parse.urlparse(uri).username
     return ConfigParams(
         **common,
-        hy2_password=password,
+        wg_secret_key=parsed_url.username or "",
+        wg_address=",".join(wg_address_clean),
+        pbk=params.get("publicKey", ""),
+        wg_reserved=params.get("reserved", ""),
+        wg_mtu=int(params.get("mtu", 1420)),
+    )
+
+
+def _parse_hysteria(
+    uri: str, common: dict, parsed_url: Optional[urllib.parse.ParseResult]
+) -> Optional[ConfigParams]:
+    if not parsed_url:
+        return None
+    params = _parse_query_params(parsed_url.query)
+    return ConfigParams(
+        **common,
+        hy2_password=parsed_url.username or "",
         security="tls",
-        sni=params.get("sni", common["address"]),
+        sni=params.get("sni", common.get("address", "")),
         alpn=params.get("alpn"),
         hy2_obfs=params.get("obfs"),
         hy2_obfs_password=params.get("obfs-password"),
@@ -432,7 +454,7 @@ class XrayConfigBuilder:
         """
         protocol_map = {
             "vless": "vless",
-            "mvless": "mvless",
+            "mvless": "vless",
             "vmess": "vmess",
             "trojan": "trojan",
             "ss": "shadowsocks",
@@ -441,21 +463,11 @@ class XrayConfigBuilder:
         }
         xray_protocol_name = protocol_map.get(params.protocol)
         if not xray_protocol_name:
-            # This protocol is not meant for Xray (like Hysteria)
-            return None
-        use_fragment = fragment_config is not None
-        stream_settings = self._build_stream_settings(
-            params, fragment=use_fragment, **kwargs
-        )
+            return None  # Not for Xray
+
+        stream_settings = self._build_stream_settings(params, **kwargs)
         protocol_settings = self._build_protocol_settings(params)
-        if params.protocol == "mvless" and params.mux_enabled:
-            try:
-                outbound["mux"] = {
-                    "enabled": True if outbound["mux"].upper() == "ON" else False,
-                    "concurrency": params.mux_concurrency,
-                }
-            except Exception:
-                print("! No mux found in mvless")
+
         final_outbound_tag = explicit_tag if explicit_tag is not None else params.tag
         outbound = {
             "tag": final_outbound_tag,
@@ -463,9 +475,14 @@ class XrayConfigBuilder:
             "settings": protocol_settings,
             "streamSettings": stream_settings,
         }
+
+        if params.protocol == "mvless" and params.mux_enabled:
+            outbound["mux"] = {
+                "enabled": True,
+                "concurrency": params.mux_concurrency,
+            }
+
         if self.warp_outbound_tag and params.tag != self.warp_outbound_tag:
-            if "streamSettings" not in outbound:
-                outbound["streamSettings"] = {}
             if "sockopt" not in outbound["streamSettings"]:
                 outbound["streamSettings"]["sockopt"] = {}
             outbound["streamSettings"]["sockopt"][
@@ -474,6 +491,7 @@ class XrayConfigBuilder:
             logging.debug(
                 f"Chaining outbound '{params.tag}' through '{self.warp_outbound_tag}'."
             )
+
         return self._remove_empty_values(outbound)
 
     def to_json(self, indent: int = 2) -> str:
@@ -481,6 +499,7 @@ class XrayConfigBuilder:
 
     def _build_stream_settings(self, params: ConfigParams, **kwargs) -> Dict[str, Any]:
         stream_settings = {"network": params.network}
+
         if params.security in ["tls", "reality"]:
             stream_settings["security"] = params.security
             security_settings = {
@@ -489,7 +508,10 @@ class XrayConfigBuilder:
                 "fingerprint": params.fp,
             }
             if params.alpn:
-                security_settings["alpn"] = params.alpn.split(",")
+                security_settings["alpn"] = [
+                    val.strip() for val in params.alpn.split(",")
+                ]
+
             if params.security == "reality":
                 security_settings.update(
                     {
@@ -501,63 +523,51 @@ class XrayConfigBuilder:
                 stream_settings["realitySettings"] = security_settings
             else:
                 stream_settings["tlsSettings"] = security_settings
-        header_config = {"type": params.header_type if params.header_type else "none"}
-        host_for_header = params.host if params.host else params.sni
-        network_map = {
-            "tcp": {"tcpSettings": {"header": header_config}},
-            "kcp": {"kcpSettings": {"header": header_config, "seed": params.path}},
-            "ws": {
+
+        header_config = (
+            {"type": params.header_type} if params.header_type != "none" else None
+        )
+        host_for_header = params.host or params.sni
+
+        network_settings = {}
+        if params.network == "tcp" and header_config:
+            network_settings = {"tcpSettings": {"header": header_config}}
+        elif params.network == "kcp" and header_config:
+            network_settings = {
+                "kcpSettings": {"header": header_config, "seed": params.path}
+            }
+        elif params.network == "ws":
+            network_settings = {
                 "wsSettings": {
                     "path": params.path,
                     "headers": {"Host": host_for_header},
                 }
-            },
-            "httpupgrade": {
-                "httpupgradeSettings": {"host": [host_for_header], "path": params.path}
-            },
-            "xhttp": {
-                "xhttpSettings": {"host": [host_for_header], "path": params.path}
-            },
-            "splithttp": {
-                "splithttpSettings": {"host": [host_for_header], "path": params.path}
-            },
-            "h2": {"httpSettings": {"host": [host_for_header], "path": params.path}},
-            "quic": {
+            }
+        elif params.network == "h2":
+            network_settings = {
+                "httpSettings": {"host": [host_for_header], "path": params.path}
+            }
+        elif params.network == "quic":
+            network_settings = {
                 "quicSettings": {
                     "security": params.host,
                     "key": params.path,
                     "header": header_config,
                 }
-            },
-            "grpc": {
+            }
+        elif params.network == "grpc":
+            network_settings = {
                 "grpcSettings": {
                     "serviceName": params.path,
                     "multiMode": (params.mode == "multi"),
                 }
-            },
-        }
-        if params.network == "grpc":
-            if params.path:
-                network_map["grpc"] = {
-                    "grpcSettings": {
-                        "serviceName": params.path,
-                        "multiMode": (params.mode == "multi"),
-                    }
-                }
-            else:
-                logging.warning(
-                    f"gRPC config '{params.tag}' is missing serviceName (path). This will cause an error in Xray."
-                )
-
-        stream_settings.update(network_map.get(params.network, {}))
-        if params.protocol == "mvless" and params.fragment_enabled:
-            stream_settings["fragment"] = {
-                "packets": params.fragment_packets,
-                "length": params.fragment_length,
-                "interval": params.fragment_interval,
             }
-        if kwargs.get("fragment_config") and not params.fragment_enabled:
-            stream_settings["sockopt"] = {"dialerProxy": "fragment"}
+
+        stream_settings.update(network_settings)
+
+        if params.protocol == "mvless" and params.fragment_enabled:
+            stream_settings["sockopt"] = {"dialerProxy": "fragment_tag"}
+
         return stream_settings
 
     def add_fragment_outbound(self, fragment_config: Dict[str, Any]):
@@ -569,7 +579,7 @@ class XrayConfigBuilder:
         final_settings = {**defaults, **fragment_config}
         fragment_outbound = {
             "protocol": "freedom",
-            "tag": "fragment",
+            "tag": "fragment_tag",
             "settings": {"fragment": final_settings},
         }
         self.add_outbound(fragment_outbound)
@@ -579,7 +589,7 @@ class XrayConfigBuilder:
         level = 0
         protocol = params.protocol
         if protocol in ["vless", "mvless"]:
-            settings = {
+            return {
                 "vnext": [
                     {
                         "address": params.address,
@@ -595,9 +605,6 @@ class XrayConfigBuilder:
                     }
                 ]
             }
-            if protocol == "mvless" and params.fragment_enabled:
-                pass
-            return settings
         elif protocol == "vmess":
             return {
                 "vnext": [
@@ -661,11 +668,6 @@ class XrayConfigBuilder:
             if params.id:
                 server["users"] = [{"user": params.id, "pass": params.password or ""}]
             return {"servers": [server]}
-        elif protocol in ["hysteria", "hysteria2"]:
-            # note: Creates a SOCKS outbound to point to an external Hysteria client
-            return {
-                "servers": [{"address": "127.0.0.1", "port": params.port}]
-            }  # Port should be local port of Hy2 client
         return {}
 
     def _remove_empty_values(self, data: Any) -> Any:
@@ -673,13 +675,13 @@ class XrayConfigBuilder:
             return {
                 k: v
                 for k, v in ((k, self._remove_empty_values(v)) for k, v in data.items())
-                if v not in [None, "", [], {}]
+                if v is not None and v not in ["", [], {}]
             }
         if isinstance(data, list):
             return [
                 v
                 for v in (self._remove_empty_values(item) for item in data)
-                if v not in [None, "", [], {}]
+                if v is not None and v not in ["", [], {}]
             ]
         return data
 
@@ -721,9 +723,6 @@ def fetch_from_subscription(
         response.raise_for_status()
         content = response.content
         try:
-            missing_padding = len(content) % 4
-            if missing_padding:
-                content += b"=" * (4 - missing_padding)
             decoded_content = base64.b64decode(content).decode("utf-8")
         except (base64.binascii.Error, UnicodeDecodeError):
             decoded_content = content.decode("utf-8")
@@ -762,15 +761,17 @@ def load_configs(
         else:
             raw_uris = [line.strip() for line in content.splitlines() if line.strip()]
     else:
-        return []
+        raw_uris = [str(source)]
+
     if (
-        isinstance(source, Path)
+        isinstance(source, (Path, list))
         and not is_subscription
         and max_configs
         and max_configs > 0
     ):
-        logging.info(f"Limiting configs from file to a maximum of {max_configs}.")
+        logging.info(f"Limiting configs from file/list to a maximum of {max_configs}.")
         raw_uris = raw_uris[:max_configs]
+
     parsed_configs = [p for p in (parse_uri(uri) for uri in raw_uris) if p]
     return parsed_configs
 
@@ -787,23 +788,26 @@ def deduplicate_configs(configs: List[ConfigParams]) -> List[ConfigParams]:
     """
     unique_configs = {}
     for config in configs:
-        if config.protocol == "vmess":
-            key = (config.protocol, config.address, config.port, config.id)
-        else:
-            key_parts = (
-                config.protocol,
-                config.address,
-                config.port,
-                config.id,
-                config.password,
-                config.wg_secret_key,
-            )
-            key = tuple(sorted(str(p) for p in key_parts))
+        key_parts = (
+            config.protocol,
+            config.address,
+            config.port,
+            config.id,
+            config.password,
+            config.wg_secret_key,
+            config.hy2_password,
+            config.path,
+            config.sni,
+            config.host,
+        )
+        key = tuple(str(p) for p in key_parts)
         if key not in unique_configs:
             unique_configs[key] = config
+
     deduplicated_list = list(unique_configs.values())
     if len(configs) > len(deduplicated_list):
         logging.info(
             f"Removed {len(configs) - len(deduplicated_list)} duplicate configurations."
         )
+
     return deduplicated_list
