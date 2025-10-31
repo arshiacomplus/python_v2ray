@@ -146,11 +146,19 @@ def _parse_vless(uri: str, common: dict) -> Optional[ConfigParams]:
 
     network_type = params.get("type", "tcp")
     path = params.get("path", "")
+    host = params.get("host", "")
+    sni = params.get("sni", host)
+
     if network_type == "grpc" and (not path or path == "/"):
-        logging.warning(
-            f"gRPC config '{common['display_tag']}' is missing a valid serviceName (path). Skipping."
+        path = sni or host
+        if not path or path == "/":
+            logging.warning(
+                f"gRPC config '{common['display_tag']}' is missing a valid serviceName (path) and has no fallback SNI/Host. Skipping."
+            )
+            return None
+        logging.info(
+            f"gRPC config '{common['display_tag']}' missing serviceName. Using fallback: '{path}'"
         )
-        return None
 
     return ConfigParams(
         **common,
@@ -166,8 +174,6 @@ def _parse_vless(uri: str, common: dict) -> Optional[ConfigParams]:
         flow=params.get("flow", ""),
         encryption=params.get("encryption", "none"),
     )
-
-
 def _parse_mvless_extensions(params: ConfigParams, uri: str):
     """Parses Mux and Fragment parameters specific to the Mvless protocol and modifies the ConfigParams object."""
     try:
@@ -199,12 +205,20 @@ def _parse_vmess(uri: str, common: dict) -> Optional[ConfigParams]:
 
         network_type = decoded.get("net", "tcp")
         path = decoded.get("path", "")
+        host = decoded.get("host", "")
+        sni = decoded.get("sni", "")
         display_tag = decoded.get("ps", common["display_tag"])
+
         if network_type == "grpc" and (not path or path == "/"):
-            logging.warning(
-                f"gRPC config '{display_tag}' is missing a valid serviceName (path). Skipping."
+            path = sni or host
+            if not path or path == "/":
+                logging.warning(
+                    f"gRPC config '{display_tag}' is missing a valid serviceName (path) and has no fallback SNI/Host. Skipping."
+                )
+                return None
+            logging.info(
+                f"gRPC config '{display_tag}' missing serviceName. Using fallback: '{path}'"
             )
-            return None
 
         vmess_internal_safe_tag = common["tag"]
         if "ps" in decoded:
@@ -232,22 +246,37 @@ def _parse_vmess(uri: str, common: dict) -> Optional[ConfigParams]:
         logging.error(f"Failed to parse VMess URI '{uri[:30]}...': {e}. Skipping.")
         return None
 
-
 def _parse_trojan(uri: str, common: dict) -> ConfigParams:
     parsed_url = urllib.parse.urlparse(uri)
     params = _parse_query_params(parsed_url.query)
+
+    network_type = params.get("type", "tcp")
+    path = params.get("path", "/")
+    host = params.get("host", "")
+    sni = params.get("sni", common.get("address", ""))
+
+    if network_type == "grpc" and (not path or path == "/"):
+        path = sni or host
+        if not path or path == "/":
+            logging.warning(
+                f"gRPC config '{common['display_tag']}' is missing a valid serviceName (path) and has no fallback SNI/Host. Skipping."
+            )
+            return None
+        logging.info(
+            f"gRPC config '{common['display_tag']}' missing serviceName. Using fallback: '{path}'"
+        )
+
     return ConfigParams(
         **common,
         password=parsed_url.username,
         sni=params.get("sni", common["address"]),
-        network=params.get("type", "tcp"),
+        network=network_type,
         security=params.get("security", "tls"),
         fp=params.get("fp", ""),
         header_type=params.get("headerType", "none"),
-        host=params.get("host", ""),
-        path=params.get("path", "/"),
+        host=host,
+        path=path,
     )
-
 
 def _parse_shadowsocks(uri: str, common: dict) -> Optional[ConfigParams]:
     try:
