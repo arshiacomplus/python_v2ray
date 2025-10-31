@@ -144,17 +144,26 @@ def parse_uri(config_uri: str) -> Optional[ConfigParams]:
         return None
 
 
-def _parse_vless(uri: str, common: dict) -> ConfigParams:
+def _parse_vless(uri: str, common: dict) -> Optional[ConfigParams]:
     parsed_url = urllib.parse.urlparse(uri)
     params = _parse_query_params(parsed_url.query)
+
+    network_type = params.get("type", "tcp")
+    path = params.get("path", "")
+    if network_type == "grpc" and (not path or path == "/"):
+        logging.warning(
+            f"gRPC config '{common['display_tag']}' is missing a valid serviceName (path). Skipping."
+        )
+        return None
+
     return ConfigParams(
         **common,
         id=parsed_url.username,
         security=params.get("security", ""),
-        network=params.get("type", "tcp"),
+        network=network_type,
         header_type=params.get("headerType", "none"),
         host=params.get("host", ""),
-        path=params.get("path", "/"),
+        path=path,
         sni=params.get("sni", params.get("host", "")),
         fp=params.get("fp", ""),
         alpn=params.get("alpn", ""),
@@ -187,31 +196,45 @@ def _parse_mvless_extensions(params: ConfigParams, uri: str):
         print(f"! Error parsing mvless extensions: {e}")
 
 
-def _parse_vmess(uri: str, common: dict) -> ConfigParams:
-    encoded_part = uri.replace("vmess://", "")
-    decoded = json.loads(base64.b64decode(encoded_part + "==").decode("utf-8"))
-    vmess_display_tag = decoded.get("ps", common["display_tag"])
-    vmess_internal_safe_tag = common["tag"]
-    if "ps" in decoded:
-        vmess_internal_safe_tag = (
-            re.sub(r"[^a-zA-Z0-9_.-]", "_", vmess_display_tag) or "proxy"
+def _parse_vmess(uri: str, common: dict) -> Optional[ConfigParams]:
+    try:
+        encoded_part = uri.replace("vmess://", "")
+        decoded = json.loads(base64.b64decode(encoded_part + "==").decode("utf-8"))
+
+        network_type = decoded.get("net", "tcp")
+        path = decoded.get("path", "")
+        display_tag = decoded.get("ps", common["display_tag"])
+        if network_type == "grpc" and (not path or path == "/"):
+            logging.warning(
+                f"gRPC config '{display_tag}' is missing a valid serviceName (path). Skipping."
+            )
+            return None
+
+        vmess_internal_safe_tag = common["tag"]
+        if "ps" in decoded:
+            vmess_internal_safe_tag = (
+                re.sub(r"[^a-zA-Z0-9_.-]", "_", display_tag) or "proxy"
+            )
+
+        return ConfigParams(
+            protocol="vmess",
+            tag=vmess_internal_safe_tag,
+            display_tag=display_tag,
+            address=decoded.get("add", ""),
+            port=int(decoded.get("port", 0)),
+            id=decoded.get("id", ""),
+            alter_id=int(decoded.get("aid", 0)),
+            scy=decoded.get("scy", "auto"),
+            network=network_type,
+            header_type=decoded.get("type", "none"),
+            host=decoded.get("host", ""),
+            path=path,
+            security="tls" if decoded.get("tls") else "",
+            sni=decoded.get("sni", ""),
         )
-    return ConfigParams(
-        protocol="vmess",
-        tag=vmess_internal_safe_tag,
-        display_tag=vmess_display_tag,
-        address=decoded.get("add", ""),
-        port=int(decoded.get("port", 0)),
-        id=decoded.get("id", ""),
-        alter_id=int(decoded.get("aid", 0)),
-        scy=decoded.get("scy", "auto"),
-        network=decoded.get("net", "tcp"),
-        header_type=decoded.get("type", "none"),
-        host=decoded.get("host", ""),
-        path=decoded.get("path", "/"),
-        security="tls" if decoded.get("tls") else "",
-        sni=decoded.get("sni", ""),
-    )
+    except Exception as e:
+        logging.error(f"Failed to parse VMess URI '{uri[:30]}...': {e}. Skipping.")
+        return None
 
 
 def _parse_trojan(uri: str, common: dict) -> ConfigParams:
@@ -231,50 +254,42 @@ def _parse_trojan(uri: str, common: dict) -> ConfigParams:
 
 
 def _parse_shadowsocks(uri: str, common: dict) -> Optional[ConfigParams]:
-    """
-    A robust parser for various ShadowSocks URI formats.
-    It gracefully handles malformed or non-standard URIs by returning None.
-    """
     try:
         main_part = uri.split("#")[0].replace("ss://", "")
-        if "@" not in main_part:
+        main_part_no_query = main_part.split("?")[0]
+
+        if "@" not in main_part_no_query:
             try:
-                missing_padding = len(main_part) % 4
-                if missing_padding:
-                    main_part += "=" * (4 - missing_padding)
-                decoded = base64.b64decode(main_part).decode("utf-8")
-                main_part = decoded
+                decoded = base64.b64decode(main_part_no_query.encode("ascii")).decode(
+                    "utf-8"
+                )
+                main_part_no_query = decoded
             except (base64.binascii.Error, UnicodeDecodeError):
                 logging.warning(
                     f"SS URI part is not standard and not valid Base64. Skipping: {uri[:50]}..."
                 )
                 return None
-        if "@" not in main_part:
+
+        if "@" not in main_part_no_query:
             logging.warning(f"Malformed SS URI after decoding. Skipping: {uri[:50]}...")
             return None
-        auth_part, server_part = main_part.split("@", 1)
+
+        auth_part, server_part = main_part_no_query.split("@", 1)
+
         if ":" not in server_part:
             logging.warning(f"Missing port in SS URI. Skipping: {uri[:50]}...")
             return None
+
         common["address"], port_str = server_part.rsplit(":", 1)
         common["port"] = int(port_str)
-        method = "chacha20-poly1305"
-        password = ""
-        try:
-            missing_padding = len(auth_part) % 4
-            if missing_padding:
-                auth_part += "=" * (4 - missing_padding)
-            decoded_auth = base64.b64decode(auth_part).decode("utf-8")
-            if ":" in decoded_auth:
-                method, password = decoded_auth.split(":", 1)
-            else:
-                password = decoded_auth
-        except (base64.binascii.Error, UnicodeDecodeError):
-            auth_part_decoded = urllib.parse.unquote(auth_part)
-            if ":" in auth_part_decoded:
-                method, password = auth_part_decoded.split(":", 1)
-            else:
-                password = auth_part_decoded
+
+        method, password = "chacha20-poly1305", ""
+        auth_part_decoded = urllib.parse.unquote(auth_part)
+        if ":" in auth_part_decoded:
+            method, password = auth_part_decoded.split(":", 1)
+        else:
+            password = auth_part_decoded
+
         return ConfigParams(**common, ss_method=method, password=password)
     except Exception as e:
         logging.error(
