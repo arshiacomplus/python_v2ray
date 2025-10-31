@@ -114,26 +114,22 @@ def parse_uri(config_uri: str) -> Optional[ConfigParams]:
             "port": 0,
         }
 
-        if "@" not in main_part:
-            if protocol == "vmess":
-                pass
-            else:
-                match_addr = re.search(r"://([^:]+):(\d+)", main_part)
-                if not match_addr:
-                    logging.warning(
-                        f"Invalid URI structure (missing @). Skipping: {uri[:50]}..."
-                    )
-                    return None
-
-        match = re.search(r"@([^:]+):(\d+)", main_part.split("?")[0])
-        if match:
-            common["address"] = match.group(1)
-            common["port"] = int(match.group(2))
+        at_match = re.search(r"@([^:]+):(\d+)", main_part)
+        if at_match:
+            common["address"] = at_match.group(1)
+            common["port"] = int(at_match.group(2))
 
         params = parser(uri, common)
-        if params and not params.display_tag:
-            params.display_tag = decoded_display_tag
-        if protocol == "mvless" and params:
+
+        if not params:
+            return None
+        if not params.address or not params.port or params.port <= 0:
+            logging.warning(
+                f"Parsed config '{params.display_tag}' is missing a valid address or port. Skipping."
+            )
+            return None
+
+        if protocol == "mvless":
             _parse_mvless_extensions(params, uri)
         return params
     except Exception as e:
