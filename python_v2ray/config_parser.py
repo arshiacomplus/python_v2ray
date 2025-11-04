@@ -491,6 +491,13 @@ class XrayConfigBuilder:
                     "multiMode": (params.mode == "multi"),
                 }
             }
+        elif params.network == "xhttp":
+            network_settings = {
+                "xhttpSettings": {
+                    "host": host_for_header,
+                    "path": params.path,
+                }
+            }
         stream_settings.update(network_settings)
         return stream_settings
 
