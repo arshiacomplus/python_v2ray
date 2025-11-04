@@ -94,12 +94,32 @@ def parse_uri(config_uri: str) -> Optional[ConfigParams]:
             internal_safe_tag = (
                 re.sub(r"[^a-zA-Z0-9_.-]", "_", decoded_display_tag) or "proxy"
             )
+            netloc = parsed_url.netloc
+            if '@' in netloc:
+                netloc = netloc.split('@', 1)[1]
+            ipv6_match = re.match(r'\[([a-fA-F0-9:]+)\]:(\d+)', netloc)
+            if ipv6_match:
+                address = ipv6_match.group(1)
+                port = int(ipv6_match.group(2))
+            else:
+
+                try:
+                    host_port_pair = netloc.rsplit(':', 1)
+                    address = host_port_pair[0]
+                    port = int(host_port_pair[1])
+                except (ValueError, IndexError):
+
+                    address = netloc
+                    port = parsed_url.port or 0
+
+            if address.startswith('[') and address.endswith(']'):
+                address = address[1:-1]
             common = {
                 "protocol": protocol,
                 "tag": internal_safe_tag,
                 "display_tag": decoded_display_tag,
-                "address": parsed_url.hostname or "",
-                "port": parsed_url.port or 0,
+                "address": address,
+                "port": port,
             }
         else:
             raw_tag_from_uri = uri.split("#", 1)[1] if "#" in uri else "Untitled"
