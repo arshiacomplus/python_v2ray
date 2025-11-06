@@ -25,6 +25,10 @@ jobs:
             goos: linux
             goarch: amd64
             arch_name: "64"
+          - os: ubuntu-latest
+            goos: linux
+            goarch: arm64
+            arch_name: "arm64"
           - os: macos-latest
             goos: darwin
             goarch: amd64
