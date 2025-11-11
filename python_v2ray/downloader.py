@@ -59,8 +59,17 @@ class BinaryDownloader:
         return None
 
     def ensure_binary(self, name: str, target_dir: Path, repo: str) -> bool:
-        exe_name = f"{name}.exe" if sys.platform == "win32" else name
+
+        exe_name = ""
+        if sys.platform == "win32":
+            exe_name = f"{name}.exe"
+        elif sys.platform == "darwin":
+            exe_name = f"{name}_macos"
+        else:  # Assuming Linux
+            exe_name = f"{name}_linux"
+
         target_file = target_dir / exe_name
+
 
         if target_file.is_file():
             print(f"* Binary '{exe_name}' already exists.")
@@ -69,7 +78,7 @@ class BinaryDownloader:
         print(f"! Binary '{exe_name}' not found. Downloading from '{repo}'...")
         try:
             if name == "hysteria":
-                release_url = f"https://api.github.com/repos/{repo}/releases/tags/app%2Fv2.6.2"  # ! Hardcoded to a specific stable version
+                release_url = f"https://api.github.com/repos/{repo}/releases/tags/app%2Fv2.6.2"
             else:
                 release_url = f"https://api.github.com/repos/{repo}/releases/latest"
 
@@ -93,21 +102,27 @@ class BinaryDownloader:
                     f.write(asset_response.content)
             else:
                 with zipfile.ZipFile(io.BytesIO(asset_response.content)) as z:
+                    member_to_extract = ""
+                    possible_names = [f"{name}.exe", name, "xray"]
                     for member_name in z.namelist():
-                        if Path(member_name).name.lower() == exe_name.lower():
-                            source = z.open(member_name)
-                            target = open(target_file, "wb")
-                            with source, target:
-                                target.write(source.read())
+                        if Path(member_name).name.lower() in possible_names:
+                            member_to_extract = member_name
+                            break
 
-                            for dat_file in ["geoip.dat", "geosite.dat"]:
-                                if dat_file in z.namelist():
-                                    with z.open(dat_file) as source_dat, open(
-                                        target_dir / dat_file, "wb"
-                                    ) as target_dat:
-                                        target_dat.write(source_dat.read())
+                    if not member_to_extract:
+                        raise FileNotFoundError(f"Could not find executable for '{name}' inside the zip file.")
 
-            print(f"* Successfully downloaded '{exe_name}'.")
+                    with z.open(member_to_extract) as source, open(target_file, "wb") as target:
+                        target.write(source.read())
+
+                    for dat_file in ["geoip.dat", "geosite.dat"]:
+                        if dat_file in z.namelist():
+                            with z.open(dat_file) as source_dat, open(
+                                target_dir / dat_file, "wb"
+                            ) as target_dat:
+                                target_dat.write(source_dat.read())
+
+            print(f"* Successfully downloaded and saved as '{exe_name}'.") 
             if sys.platform != "win32":
                 os.chmod(target_file, 0o755)
             return True
@@ -115,7 +130,6 @@ class BinaryDownloader:
         except Exception as e:
             print(f"! ERROR during download/extraction for '{name}': {e}")
             return False
-
     def ensure_all(self):
         print("--- Checking for necessary binaries & databases ---")
         self.vendor_path.mkdir(exist_ok=True)
