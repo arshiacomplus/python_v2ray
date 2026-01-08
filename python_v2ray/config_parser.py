@@ -8,8 +8,6 @@ from typing import Dict, Any, Optional, List, Union
 import logging
 import requests
 from pathlib import Path
-
-
 @dataclass
 class ConfigParams:
     protocol: str
@@ -49,8 +47,6 @@ class ConfigParams:
     fragment_packets: Optional[str] = ""
     fragment_length: Optional[str] = ""
     fragment_interval: Optional[str] = ""
-
-
 def _parse_query_params(query: str) -> Dict[str, str]:
     params = {}
     if not query:
@@ -59,8 +55,6 @@ def _parse_query_params(query: str) -> Dict[str, str]:
     for key, values in parsed_qs.items():
         params[key] = values[-1] if values else ""
     return params
-
-
 def parse_uri(config_uri: str) -> Optional[ConfigParams]:
     try:
         uri = config_uri.strip()
@@ -102,16 +96,13 @@ def parse_uri(config_uri: str) -> Optional[ConfigParams]:
                 address = ipv6_match.group(1)
                 port = int(ipv6_match.group(2))
             else:
-
                 try:
                     host_port_pair = netloc.rsplit(':', 1)
                     address = host_port_pair[0]
                     port = int(host_port_pair[1])
                 except (ValueError, IndexError):
-
                     address = netloc
                     port = parsed_url.port or 0
-
             if address.startswith('[') and address.endswith(']'):
                 address = address[1:-1]
             common = {
@@ -158,15 +149,12 @@ def parse_uri(config_uri: str) -> Optional[ConfigParams]:
         return params
     except Exception:
         return None
-
-
 def _parse_vless(
     uri: str, common: dict, parsed_url: Optional[urllib.parse.ParseResult]
 ) -> Optional[ConfigParams]:
     if not parsed_url:
         return None
     params = _parse_query_params(parsed_url.query)
-
     security = params.get("security", "none")
     pbk = params.get("pbk", "")
     if security == "reality" and not pbk:
@@ -174,8 +162,6 @@ def _parse_vless(
             f"REALITY config '{common['display_tag']}' is missing public key (pbk). Skipping."
         )
         return None
-
-
     network_type = params.get("type", "tcp")
     path = params.get("path", "")
     host = params.get("host", "")
@@ -189,6 +175,8 @@ def _parse_vless(
         id=parsed_url.username or "",
         security=security,
         pbk=pbk,
+        sid=params.get("sid", ""),
+        spx=params.get("spx", ""),
         network=network_type,
         header_type=params.get("headerType", "none"),
         host=host,
@@ -199,16 +187,12 @@ def _parse_vless(
         flow=params.get("flow", ""),
         encryption=params.get("encryption", "none"),
     )
-
-
 def _parse_trojan(
     uri: str, common: dict, parsed_url: Optional[urllib.parse.ParseResult]
 ) -> Optional[ConfigParams]:
     if not parsed_url:
         return None
     params = _parse_query_params(parsed_url.query)
-
-
     security = params.get("security", "tls")
     pbk = params.get("pbk", "")
     if security == "reality" and not pbk:
@@ -216,7 +200,6 @@ def _parse_trojan(
             f"REALITY config '{common['display_tag']}' is missing public key (pbk). Skipping."
         )
         return None
-
     network_type = params.get("type", "tcp")
     path = params.get("path", "/")
     host = params.get("host", "")
@@ -232,13 +215,15 @@ def _parse_trojan(
         network=network_type,
         security=security,
         pbk=pbk,
+        sid=params.get("sid", ""),
+        spx=params.get("spx", ""),
         fp=params.get("fp", ""),
+        alpn=params.get("alpn", ""),
         header_type=params.get("headerType", "none"),
         host=host,
         path=path,
+        flow=params.get("flow", ""),
     )
-
-
 def _parse_mvless_extensions(params: ConfigParams, uri: str):
     try:
         query_params = _parse_query_params(urllib.parse.urlparse(uri).query)
@@ -252,8 +237,6 @@ def _parse_mvless_extensions(params: ConfigParams, uri: str):
             params.fragment_interval = query_params["interval"]
     except Exception:
         pass
-
-
 def _parse_vmess(
     uri: str, common: dict, parsed_url: Optional[urllib.parse.ParseResult]
 ) -> Optional[ConfigParams]:
@@ -284,11 +267,11 @@ def _parse_vmess(
             path=path,
             security="tls" if decoded.get("tls") else "none",
             sni=sni,
+            fp=decoded.get("fp", ""),
+            alpn=decoded.get("alpn", ""),
         )
     except Exception:
         return None
-
-
 def _parse_shadowsocks(
     uri: str, common: dict, parsed_url: Optional[urllib.parse.ParseResult]
 ) -> Optional[ConfigParams]:
@@ -312,16 +295,12 @@ def _parse_shadowsocks(
         params = _parse_query_params(parsed_url.query)
         method = params.get("method", "chacha20-poly1305")
         return ConfigParams(**common, ss_method=method, password=auth_part)
-
-
 def _parse_socks(
     uri: str, common: dict, parsed_url: Optional[urllib.parse.ParseResult]
 ) -> Optional[ConfigParams]:
     if not parsed_url:
         return None
     return ConfigParams(**common, id=parsed_url.username, password=parsed_url.password)
-
-
 def _parse_wireguard(
     uri: str, common: dict, parsed_url: Optional[urllib.parse.ParseResult]
 ) -> Optional[ConfigParams]:
@@ -338,8 +317,6 @@ def _parse_wireguard(
         wg_reserved=params.get("reserved", ""),
         wg_mtu=int(params.get("mtu", 1420)),
     )
-
-
 def _parse_hysteria(
     uri: str, common: dict, parsed_url: Optional[urllib.parse.ParseResult]
 ) -> Optional[ConfigParams]:
@@ -355,8 +332,6 @@ def _parse_hysteria(
         hy2_obfs=params.get("obfs"),
         hy2_obfs_password=params.get("obfs-password"),
     )
-
-
 # (XrayConfigBuilder and other functions remain unchanged)
 class XrayConfigBuilder:
     def __init__(self):
@@ -377,15 +352,12 @@ class XrayConfigBuilder:
             "routing": {"rules": []},
         }
         self.warp_outbound_tag: Optional[str] = None
-
     def add_inbound(self, inbound_config: Dict[str, Any]):
         self.config["inbounds"].append(inbound_config)
         return self
-
     def add_outbound(self, outbound_config: Dict[str, Any]):
         self.config["outbounds"].append(outbound_config)
         return self
-
     def build_outbound_from_params(
         self, params: ConfigParams, explicit_tag: Optional[str] = None, **kwargs
     ) -> Optional[Dict[str, Any]]:
@@ -417,10 +389,8 @@ class XrayConfigBuilder:
                 "dialerProxy"
             ] = self.warp_outbound_tag
         return self._remove_empty_values(outbound)
-
     def to_json(self, indent: int = 2) -> str:
         return json.dumps(self.config, indent=indent, ensure_ascii=False)
-
     def _build_stream_settings(self, params: ConfigParams, **kwargs) -> Dict[str, Any]:
         stream_settings = {"network": params.network}
         if params.security in ["tls", "reality"]:
@@ -500,7 +470,6 @@ class XrayConfigBuilder:
             }
         stream_settings.update(network_settings)
         return stream_settings
-
     def _build_protocol_settings(self, params: ConfigParams) -> Dict[str, Any]:
         level = 0
         protocol = params.protocol
@@ -585,7 +554,6 @@ class XrayConfigBuilder:
             server["users"] = [{"user": params.id, "pass": params.password or ""}]
         return {"servers": [server]}
         return {}
-
     def _remove_empty_values(self, data: Any) -> Any:
         if isinstance(data, dict):
             return {
@@ -600,8 +568,6 @@ class XrayConfigBuilder:
                 if v is not None and v not in ["", [], {}]
             ]
         return data
-
-
 def fetch_from_subscription(
     url: str, timeout: int = 10, max_configs: Optional[int] = None
 ) -> List[str]:
@@ -619,8 +585,6 @@ def fetch_from_subscription(
         return uris
     except Exception:
         return []
-
-
 def load_configs(
     source: Union[str, List[str], Path],
     is_subscription: bool = False,
@@ -649,8 +613,6 @@ def load_configs(
     ):
         raw_uris = raw_uris[:max_configs]
     return [p for p in (parse_uri(uri) for uri in raw_uris) if p]
-
-
 def deduplicate_configs(configs: List[ConfigParams]) -> List[ConfigParams]:
     unique_configs = {}
     for config in configs:
