@@ -31,7 +31,7 @@ def proxy_manager(func):
         if not parsed_params:
             return []
         logging.info(f"Orchestrating proxies for '{func.__name__}'...")
-        base_port = 20800
+        base_port = kwargs.get("base_port", 20800)
         jobs_to_run = []
         proxies_to_manage = []
         xray_params_to_merge = []
@@ -302,3 +302,4 @@ class ConnectionTester:
             )
             ip_counter += 1
         return self._run_go_tester(test_jobs, timeout)
+
